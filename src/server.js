@@ -6,6 +6,7 @@ const morgan = require('morgan');
 const env = require('./config/env');
 const settlementWorker = require('./jobs/settlement-worker');
 const { connectDatabase, disconnectDatabase } = require('./config/database');
+const { ensureDatabaseConnected } = require('./config/vercel-database');
 const authRoutes = require('./routes/auth.routes');
 const healthRoutes = require('./routes/health.routes');
 const deviceRoutes = require('./routes/device.routes');
@@ -25,6 +26,44 @@ app.use(express.json({ limit: '7mb' }));
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
 
 app.get('/api/health', healthController.serverHealth);
+
+app.get('/api/cron/settlement', async (req, res) => {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return res.status(503).json({ error: 'Scheduled settlement is not configured.' });
+  if (req.headers.authorization !== `Bearer ${cronSecret}`) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    await ensureDatabaseConnected();
+    const dailySettlement = require('./services/daily-settlement.service');
+    const totals = { claimed: 0, settled: 0, failed: 0 };
+    // Bound each scheduled invocation; later runs safely continue any backlog.
+    for (let batch = 0; batch < 100; batch += 1) {
+      const result = await dailySettlement.processBatch({ batchSize: 20, concurrency: 2 });
+      totals.claimed += result.claimed;
+      totals.settled += result.settled;
+      totals.failed += result.failed;
+      if (result.claimed < 20) break;
+    }
+    return res.status(200).json({ ok: true, ...totals });
+  } catch (error) {
+    console.error('Scheduled settlement failed:', error.code || error.name);
+    return res.status(500).json({ error: 'Scheduled settlement failed.' });
+  }
+});
+
+if (process.env.VERCEL === '1') {
+  app.use('/api/v1', async (req, res, next) => {
+    try {
+      await ensureDatabaseConnected();
+      next();
+    } catch (error) {
+      next(error);
+    }
+  });
+}
+
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', require('./routes/admin.routes'));
 app.use('/api/v1/community', require('./routes/community.routes'));

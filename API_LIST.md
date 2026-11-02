@@ -2,7 +2,7 @@
 
 Base URL (local, default port): **`http://localhost:5000/api/v1`**
 
-Server URL: `http://localhost:5000`  
+Server URL: `http://localhost:5000`
 Health check: `GET http://localhost:5000/api/health`
 
 `PORT` change hone par URL mein port bhi change karein. Deployed backend ka domain is guide mein assume nahi kiya gaya hai. Android emulator se local backend ke liye `http://10.0.2.2:5000/api/v1` use karein; physical phone par reachable computer LAN IP use karein.

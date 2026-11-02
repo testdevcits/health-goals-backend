@@ -38,6 +38,27 @@ CORS_ORIGIN=http://localhost:3000
 
 Never commit real credentials.
 
+## Deploy on Vercel
+
+This API is configured as a Vercel Express function. In Vercel, import the GitHub repository and set **Root Directory** to `backend` (the Android repository contains `backend/` and `frontend/` folders). Leave the Build Command and Output Directory at their defaults. Deploy only after adding the environment variables below in Project Settings → Environment Variables.
+
+Required production variables:
+
+- `NODE_ENV=production`
+- `APP_MODE=live`
+- `USE_MONGODB=true`
+- `MONGODB_URI` — MongoDB Atlas connection string for a replica set or sharded cluster
+- `JWT_SECRET` and `JWT_REFRESH_SECRET` — two different long random secrets
+- `CRON_SECRET` — a random secret of at least 16 characters for the protected settlement job
+- `SETTLEMENT_ENABLED=true`
+- `CLOUDINARY_CLOUD_NAME`, `CLOUDINARY_API_KEY`, `CLOUDINARY_API_SECRET`
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, `SMTP_FROM` — required to send verification and reset codes
+- `ALLOWED_ORIGINS` — exact deployed admin frontend origin(s), comma-separated
+
+Set `GOOGLE_CLIENT_ID` if Google sign-in is enabled and set `ADMIN_EMAILS` to the admin account addresses. Vercel runs the settlement endpoint once daily at 18:30 UTC (midnight IST); on Hobby, invocation can be delayed within the scheduled hour. `GET /api/health` checks that the function is responding. After the first deployment, use the Vercel HTTPS domain as the API origin in the admin frontend and Android release build.
+
+The local `backend/.env` is not uploaded. Add values in Vercel's environment variable settings; never paste secrets into source files or commit them.
+
 For Google sign-in, set `GOOGLE_CLIENT_ID` to the Google OAuth Web application client ID. The mobile app sends a Google ID token to `POST /api/v1/auth/google`; the backend verifies it before creating or signing in a user. Mobile registration supports optional `companyCode` and `goal` fields.
 
 For local API testing without MongoDB, set:
