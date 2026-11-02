@@ -32,7 +32,7 @@ exports.request = async ({ email, purpose, payload }) => {
     if (prior && now - new Date(prior.createdAt).getTime() < 60000) throw new AppError('Wait 60 seconds before requesting another code', 429);
     memory.set(email, row);
   }
-  try { if (env.appMode !== 'dev') await mail.sendOtp(email, otp); }
+  try { if (env.appMode !== 'dev') await mail.sendOtp(email, otp, purpose); }
   catch (error) {
     if (env.useMongoDB) await Challenge.deleteOne({ challengeId: row._id });
     else if (memory.get(email)?._id === row._id) memory.delete(email);

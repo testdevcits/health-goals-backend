@@ -78,6 +78,27 @@ const toRedemption = (redemption) => ({
   createdAt: redemption.createdAt || redemption.created_at
 });
 
+const listAllRewards = async () => env.useMongoDB
+  ? (await Reward.find().sort({ createdAt: -1, _id: -1 })).map(toReward)
+  : (seedRewards(), rewards.map(toReward));
+const listAllRedemptions = async () => env.useMongoDB
+  ? (await Redemption.find().sort({ createdAt: -1, _id: -1 })).map(toRedemption)
+  : redemptions.map(row => ({ ...toRedemption(row), rewardTitle: rewards.find(reward => reward.id === row.reward_id)?.title || 'Reward' }));
+
+const createReward = async payload => env.useMongoDB
+  ? toReward(await Reward.create(payload))
+  : (rewards.push({ ...payload, id: crypto.randomUUID(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() }), toReward(rewards[rewards.length - 1]));
+const updateReward = async (id, payload) => {
+  if (env.useMongoDB) {
+    const row = await Reward.findByIdAndUpdate(id, { $set: payload }, { new: true, runValidators: true });
+    return row ? toReward(row) : null;
+  }
+  const row = rewards.find(item => item.id === id);
+  if (!row) return null;
+  Object.assign(row, payload, { updated_at: new Date().toISOString() });
+  return toReward(row);
+};
+
 const getActiveRewards = async () => {
   if (!env.useMongoDB) {
     seedRewards();
@@ -180,5 +201,11 @@ module.exports = {
   decrementStock,
   createRedemption,
   getRedemptionsByUserId,
-  getRedemptionById
+  getRedemptionById,
+  listAllRewards,
+  listAllRedemptions,
+  createReward,
+  updateReward,
+  toReward,
+  toRedemption
 };

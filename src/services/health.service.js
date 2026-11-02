@@ -129,6 +129,13 @@ const getRecords = async (userId, filters = {}) => {
   return healthModel.getHealthRecordsByUserId(userId, filters);
 };
 
+const getDailyHistory = async (userId, filters = {}) => {
+  validateMetricType(filters.metricType);
+  const from = new Date(`${filters.from}T00:00:00+05:30`), to = new Date(`${filters.to}T23:59:59.999+05:30`);
+  if (!filters.from || !filters.to || !Number.isFinite(+from) || !Number.isFinite(+to) || from > to) throw new AppError('Valid from and to dates are required', 400);
+  return healthModel.getDailyHealthHistory(userId, { ...filters, from, to });
+};
+
 const getDashboard = async (userId) => {
   return healthModel.getDashboardByUserId(userId);
 };
@@ -147,6 +154,7 @@ module.exports = {
   syncRecords,
   createRecord,
   getRecords,
+  getDailyHistory,
   getSummary,
   getDashboard
 };

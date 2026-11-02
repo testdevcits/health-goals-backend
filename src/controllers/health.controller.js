@@ -37,6 +37,13 @@ const getRecords = async (req, res, next) => {
   }
 };
 
+const getHistory = async (req, res, next) => {
+  try {
+    const history = await healthService.getDailyHistory(req.user.id, req.query);
+    return successResponse(res, 200, 'Daily health history fetched successfully', { history });
+  } catch (error) { next(error); }
+};
+
 const getDashboard = async (req, res, next) => {
   try {
     const dashboard = await healthService.getDashboard(req.user.id);
@@ -60,6 +67,7 @@ module.exports = {
   createRecord,
   syncRecords,
   getRecords,
+  getHistory,
   getSummary,
   getDashboard
 };

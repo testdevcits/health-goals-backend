@@ -25,16 +25,22 @@ Authorization: Bearer <accessToken>
 
 Public = token nahi chahiye. User = logged-in active user. Admin = logged-in user jiska email backend ke `ADMIN_EMAILS` allowlist mein hai. Sirf body mein `admin: true` bhejne se admin permission nahi milti.
 
-## 1. Authentication — 6 APIs
+## 1. Authentication
 
 | Method | Path | Access | Kaam / input |
 |---|---|---|---|
-| POST | `/auth/register` | Public | Account registration OTP shuru karein. Body: `name`, `email`, `password` (8–72 characters). Account OTP verify hone par banta hai. |
+| POST | `/auth/register` | Public | Account registration OTP shuru karein. Body: `name`, `email`, `password` (8–72 characters), optional `companyCode` and `goal`. Account OTP verify hone par banta hai. |
 | POST | `/auth/login` | Public | Password check ke baad OTP challenge. Body: `identifier` (email ya public User ID), `password`. `email` aur `userId` aliases bhi supported hain. |
 | POST | `/auth/verify-otp` | Public | Body: `challengeId`, `otp`. Successful verification par user aur tokens milte hain. |
+| POST | `/auth/password/forgot` | Public | Body: `email`. Account ho to 6-digit password reset code bhejta hai. |
+| POST | `/auth/password/reset` | Public | Body: `challengeId`, `otp`, `password` (8–72 characters). Password update karke existing sessions revoke karta hai. |
+| POST | `/auth/google` | Public | Body: verified Google `idToken`. Backend token verify karke existing account sign in karta hai ya naya user account banata hai. Requires `GOOGLE_CLIENT_ID`. |
 | POST | `/auth/refresh` | Public | Body: `refreshToken`. Naya access token aur rotated refresh token deta hai. |
 | POST | `/auth/logout` | User | Session revoke karein; body required nahi. |
 | GET | `/auth/me` | User | Current user profile. |
+| PATCH | `/auth/me` | User | Profile fields update karein: optional `name`, `goal`, `heightCm` (50–300), `weightKg` (20–500), `birthDate` (`DD/MM/YYYY`). Email read-only hai. |
+| PATCH | `/auth/me/goals` | User | Daily health goal save karein. Body: `metricType` (`steps`, `sleep`, `heart_rate`, `stress`) aur numeric `targetValue`. |
+| POST | `/auth/me/device` | User | Current account ke profile mein phone metadata save/update karein. Body: `deviceIdentifier`, `manufacturer`, `brand`, `model`, `platform`, `osVersion`, `appVersion`. Hardware serial/IMEI na bhejein. |
 
 Login/register HTTP `202` par `data.challengeId` dete hain, token nahi. Login response mein `maskedEmail` bhi milta hai. Uske baad verify request karein:
 
@@ -77,6 +83,7 @@ Registration example:
 | POST | `/health/records` | Ek health record save/update karein. Neeche payload dekhein. New record `201`, duplicate `200`. |
 | POST | `/health/sync` | Batch upload: `{"records":[...]}`; 1–100 records per request. |
 | GET | `/health/records` | Apne records; optional `metricType`. Is endpoint par pagination/date filters implemented nahi hain; paginated list ke liye `/activity/records` use karein. |
+| GET | `/health/history` | Daily aggregated metric history; `metricType`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD` required. |
 | GET | `/health/summary` | Health metrics ka summary. |
 | GET | `/health/dashboard` | Dashboard ke liye combined data. |
 
@@ -127,7 +134,23 @@ Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=
 | GET | `/redemptions` | Apni redemption history. |
 | GET | `/redemptions/:id` | Ek apni redemption ki details. |
 
-## 6. Admin — 14 APIs (Admin only)
+## 6. Groups aur challenges (User)
+
+| Method | Path | Kaam |
+|---|---|---|
+| GET | `/community/groups` | Apne groups list karein. |
+| GET | `/community/groups/discover` | Public groups list karein. |
+| POST | `/community/groups` | Group banayein: `name`, optional `description`, `emoji`, `private`. Creator automatically member hota hai. |
+| GET | `/community/groups/:id` | Group details; private group sirf members ke liye. |
+| POST | `/community/groups/:id/join` | Group join karein. |
+| GET/POST | `/community/groups/:id/messages` | Joined members ka chat history/send; send body `message`. |
+| GET/POST | `/community/groups/:id/challenges` | Group challenges list/create. |
+| GET | `/community/challenges` | Active challenges list karein. |
+| POST | `/community/challenges` | Challenge banayein: `title`, `metricType`, `targetValue`, `endsAt`, optional `description`, `startsAt`, `rewardPoints`. |
+| POST | `/community/challenges/:id/join` | Challenge join karein. |
+| GET | `/community/badges` | Synced health activity se earned badges aur progress. |
+
+## 7. Admin (Admin only)
 
 Yahan `:id` user ka **internal `id`** hai; `USR-...` wala permanent `publicId` login/display ke liye hai.
 
@@ -137,6 +160,10 @@ Yahan `:id` user ka **internal `id`** hai; `USR-...` wala permanent `publicId` l
 | GET | `/admin/users` | Paginated users; `page`, `limit`, `q`, `from`, `to`, `status`. |
 | GET | `/admin/records` | Paginated records; `page`, `limit`, `q`, `from`, `to`, `userId`, `metricType`. |
 | GET | `/admin/devices` | Paginated devices; `page`, `limit`, `q`, `from`, `to`, `userId`, `status`, `platform`, `model`. |
+| GET | `/admin/rewards` | Paginated reward catalogue including inactive/out-of-stock entries; `page`, `limit`. |
+| GET | `/admin/redemptions` | Paginated redemption history with user and reward details; `page`, `limit`. |
+| POST | `/admin/rewards` | Reward create karein; `name`, `description`, `pointsCost`, optional `stock`, `imageUrl`, `isActive`. |
+| PATCH | `/admin/rewards/:id` | Reward details, stock, ya active state update karein. |
 | GET | `/admin/users/:id` | Profile, wallet, record/device counts aur `canChangeStatus`. |
 | PATCH | `/admin/users/:id/status` | Body: `{"status":"ACTIVE"}` ya `{"status":"SUSPENDED"}`. Self/admin accounts ka status yahan change nahi hota. Status change existing sessions revoke karta hai. |
 | GET | `/admin/users/:id/steps` | Date-wise reported/counted steps; `page`, `limit`, `from`, `to`. |

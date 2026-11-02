@@ -5,7 +5,7 @@ const {successResponse}=require('../utils/response');
 const query=require('../services/admin-query.service');
 router.use(authenticate);
 router.get('/today',async(req,res,next)=>{try{successResponse(res,200,'Daily activity and pending coins',await daily.progress(req.user.id,req.query.day));}catch(error){next(error);}});
-router.get('/history',async(req,res,next)=>{try{const {page,limit}=query.buildQuery('users',req.query);successResponse(res,200,'Daily coin history',await daily.history(req.user.id,page,limit));}catch(error){next(error);}});
+router.get('/history',async(req,res,next)=>{try{const {page,limit}=query.buildQuery('users',req.query);successResponse(res,200,'Daily coin history',await daily.history(req.user.id,page,limit,req.query));}catch(error){next(error);}});
 router.get('/records',async(req,res,next)=>{try{successResponse(res,200,'Paginated activity records',await query.list('records',{...req.query,userId:req.user.id}));}catch(error){next(error);}});
 router.get('/transactions',async(req,res,next)=>{try{
  const {page,limit}=query.buildQuery('users',req.query);const env=require('../config/env');const wallet=require('../models/wallet.model');

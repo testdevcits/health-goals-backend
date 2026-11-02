@@ -2,6 +2,18 @@ const mongoose = require('mongoose');
 const env = require('../config/env');
 const crypto = require('crypto');
 
+const deviceProfileSchema = new mongoose.Schema({
+  deviceIdentifier: { type: String, default: null },
+  deviceType: { type: String, default: 'phone' },
+  manufacturer: { type: String, default: null },
+  brand: { type: String, default: null },
+  model: { type: String, default: null },
+  platform: { type: String, default: 'android' },
+  osVersion: { type: String, default: null },
+  appVersion: { type: String, default: null },
+  lastSeenAt: { type: Date, default: Date.now }
+}, { _id: false });
+
 const userSchema = new mongoose.Schema(
   {
     publicId: { type: String, unique: true, sparse: true, immutable: true },
@@ -10,6 +22,14 @@ const userSchema = new mongoose.Schema(
       required: true,
       trim: true
     },
+    companyCode: { type: String, default: '' },
+    goal: { type: String, default: '' },
+    healthGoals: { type: Map, of: Number, default: {} },
+    heightCm: { type: Number, default: null },
+    weightKg: { type: Number, default: null },
+    birthDate: { type: String, default: '' },
+    profileImageUrl: { type: String, default: '' },
+    deviceProfile: { type: deviceProfileSchema, default: null },
     email: {
       type: String,
       required: true,
@@ -55,6 +75,14 @@ const toPublicUser = (user) => ({
   id: user.id || user._id.toString(),
   publicId: user.publicId || null,
   name: user.name,
+  companyCode: user.companyCode || '',
+  goal: user.goal || '',
+  healthGoals: user.healthGoals instanceof Map ? Object.fromEntries(user.healthGoals) : (user.healthGoals || {}),
+  heightCm: user.heightCm ?? user.height_cm ?? null,
+  weightKg: user.weightKg ?? user.weight_kg ?? null,
+  birthDate: user.birthDate || user.birth_date || '',
+  profileImageUrl: user.profileImageUrl || user.profile_image_url || '',
+  deviceProfile: user.deviceProfile || user.device_profile || null,
   email: user.email,
   authVersion: user.authVersion || 0,
   status: user.status || 'ACTIVE',
@@ -70,13 +98,15 @@ const toAuthUser = (user) => ({
   refresh_token_hash: user.refreshTokenHash || user.refresh_token_hash
 });
 
-const createUser = async ({ name, email, passwordHash, role = 'USER' }) => {
+const createUser = async ({ name, email, passwordHash, role = 'USER', companyCode = '', goal = '' }) => {
   const publicId = `USR-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
   if (!env.useMongoDB) {
     const now = new Date().toISOString();
     const user = {
       id: crypto.randomUUID(),
       name,
+      companyCode,
+      goal,
       publicId,
       email: email.toLowerCase(),
       password_hash: passwordHash,
@@ -95,6 +125,8 @@ const createUser = async ({ name, email, passwordHash, role = 'USER' }) => {
   const user = await User.create({
     publicId,
     name,
+    companyCode,
+    goal,
     email,
     passwordHash,
     role
@@ -203,5 +235,66 @@ module.exports = {
   findAuthUserById,
   updateRefreshToken,
   updateLastLogin,
+  updateDeviceProfile: async (id, profile) => {
+    if (!env.useMongoDB) {
+      const user = users.find((currentUser) => currentUser.id === id);
+      if (!user) return null;
+      user.device_profile = { ...profile, lastSeenAt: new Date().toISOString() };
+      user.updated_at = new Date().toISOString();
+      return toPublicUser(user);
+    }
+    const user = await User.findByIdAndUpdate(id, {
+      $set: { deviceProfile: { ...profile, lastSeenAt: new Date() } }
+    }, { new: true });
+    return user ? toPublicUser(user) : null;
+  },
+  updateProfile: async (id, profile) => {
+    if (!env.useMongoDB) {
+      const user = users.find((currentUser) => currentUser.id === id);
+      if (!user) return null;
+      Object.assign(user, profile, { updated_at: new Date().toISOString() });
+      return toPublicUser(user);
+    }
+    const user = await User.findByIdAndUpdate(id, { $set: profile }, { new: true, runValidators: true });
+    return user ? toPublicUser(user) : null;
+  },
+  updateHealthGoal: async (id, metricType, targetValue) => {
+    if (!env.useMongoDB) {
+      const user = users.find((currentUser) => currentUser.id === id);
+      if (!user) return null;
+      user.healthGoals = { ...(user.healthGoals || {}), [metricType]: targetValue };
+      user.updated_at = new Date().toISOString();
+      return toPublicUser(user);
+    }
+    const user = await User.findByIdAndUpdate(id, { $set: { [`healthGoals.${metricType}`]: targetValue } }, { new: true, runValidators: true });
+    return user ? toPublicUser(user) : null;
+  },
+  updateProfileImage: async (id, profileImageUrl) => {
+    if (!env.useMongoDB) {
+      const user = users.find(currentUser => currentUser.id === id);
+      if (!user) return null;
+      user.profileImageUrl = profileImageUrl;
+      user.updated_at = new Date().toISOString();
+      return toPublicUser(user);
+    }
+    const user = await User.findByIdAndUpdate(id, { $set: { profileImageUrl } }, { new: true });
+    return user ? toPublicUser(user) : null;
+  },
+  updatePassword: async (id, passwordHash) => {
+    if (!env.useMongoDB) {
+      const user = users.find((currentUser) => currentUser.id === id);
+      if (!user) return false;
+      user.password_hash = passwordHash;
+      user.refresh_token_hash = null;
+      user.authVersion = (user.authVersion || 0) + 1;
+      user.updated_at = new Date().toISOString();
+      return true;
+    }
+    const result = await User.updateOne({ _id: id }, {
+      $set: { passwordHash, refreshTokenHash: null },
+      $inc: { authVersion: 1 }
+    });
+    return result.modifiedCount === 1;
+  },
   toPublicUser
 };

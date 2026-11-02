@@ -5,6 +5,7 @@ const env = require('../config/env');
 const users = require('../models/user.model');
 const query = require('../services/admin-query.service');
 const wallet = require('../models/wallet.model');
+const rewardModel = require('../models/reward.model');
 const audit = require('../models/audit.model');
 const { successResponse } = require('../utils/response');
 const { authLimiter, adminWriteLimiter } = require('../middleware/rate-limit.middleware');
@@ -15,6 +16,43 @@ router.get('/coin-rules',async(req,res,next)=>{try{const {page,limit}=query.buil
 router.post('/coin-rules',adminWriteLimiter,async(req,res,next)=>{try{successResponse(res,201,'New coin rule version scheduled',await coinRules.create(req.body,req.user.id));}catch(error){next(error);}});
 router.get('/overview',async(req,res,next)=>{try{successResponse(res,200,'Admin overview',await query.overview());}catch(error){next(error);}});
 for(const kind of ['users','records','devices']) router.get(`/${kind}`,async(req,res,next)=>{try{successResponse(res,200,`Admin ${kind}`,await query.list(kind,req.query));}catch(error){next(error);}});
+router.get('/rewards',async(req,res,next)=>{try{
+  const page=Number(req.query.page||1),limit=Number(req.query.limit||20);
+  if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>100)throw new AppError('Invalid pagination parameters',400);
+  let items,total;
+  if(env.useMongoDB){const [rows,count]=await Promise.all([rewardModel.Reward.find().sort({createdAt:-1,_id:-1}).skip((page-1)*limit).limit(limit).lean(),rewardModel.Reward.countDocuments()]);items=rows.map(rewardModel.toReward);total=count;}
+  else {const rows=await rewardModel.listAllRewards();total=rows.length;items=rows.slice((page-1)*limit,page*limit);}
+  successResponse(res,200,'Admin rewards',{items,total,page,limit,totalPages:Math.ceil(total/limit)});
+}catch(error){next(error);}});
+function rewardPayload(body, partial=false){
+  const payload={};
+  for(const field of ['title','description','provider','terms','status']) if(body?.[field]!==undefined)payload[field]=body[field];
+  for(const field of ['pointsRequired','stock']) if(body?.[field]!==undefined)payload[field]=Number(body[field]);
+  for(const field of ['startAt','endAt']) if(body?.[field]!==undefined)payload[field]=body[field] ? new Date(body[field]) : null;
+  if(!partial&&!payload.title)throw new AppError('Reward title is required',400);
+  if(payload.title!==undefined&&(typeof payload.title!=='string'||!payload.title.trim()||payload.title.trim().length>100))throw new AppError('Reward title must be 1 to 100 characters',400);
+  if(payload.description!==undefined&&(typeof payload.description!=='string'||payload.description.length>1000))throw new AppError('Description must be at most 1000 characters',400);
+  if(payload.provider!==undefined&&(typeof payload.provider!=='string'||payload.provider.length>100))throw new AppError('Provider must be at most 100 characters',400);
+  if(payload.terms!==undefined&&(typeof payload.terms!=='string'||payload.terms.length>3000))throw new AppError('Terms must be at most 3000 characters',400);
+  if(payload.pointsRequired!==undefined&&(!Number.isSafeInteger(payload.pointsRequired)||payload.pointsRequired<1||payload.pointsRequired>100000000))throw new AppError('pointsRequired must be a positive whole number',400);
+  if(payload.stock!==undefined&&(!Number.isSafeInteger(payload.stock)||payload.stock<0||payload.stock>10000000))throw new AppError('stock must be a non-negative whole number',400);
+  if(payload.status!==undefined&&!['ACTIVE','INACTIVE','EXPIRED'].includes(payload.status))throw new AppError('Invalid reward status',400);
+  for(const field of ['startAt','endAt'])if(payload[field]&&!Number.isFinite(+payload[field]))throw new AppError(`Invalid ${field}`,400);
+  if(payload.title)payload.title=payload.title.trim();
+  return payload;
+}
+router.post('/rewards',adminWriteLimiter,async(req,res,next)=>{try{const reward=await rewardModel.createReward(rewardPayload(req.body));await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_CREATED',metadata:{rewardId:reward.id,title:reward.title},requestId:req.requestId});successResponse(res,201,'Reward created',{reward});}catch(error){next(error);}});
+router.patch('/rewards/:id',adminWriteLimiter,async(req,res,next)=>{try{const reward=await rewardModel.updateReward(req.params.id,rewardPayload(req.body,true));if(!reward)throw new AppError('Reward not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_UPDATED',metadata:{rewardId:reward.id,changes:Object.keys(req.body||{})},requestId:req.requestId});successResponse(res,200,'Reward updated',{reward});}catch(error){next(error);}});
+router.get('/redemptions',async(req,res,next)=>{try{
+  const page=Number(req.query.page||1),limit=Number(req.query.limit||20);
+  if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>100)throw new AppError('Invalid pagination parameters',400);
+  let rows,total;
+  if(env.useMongoDB){[rows,total]=await Promise.all([rewardModel.Redemption.find().sort({createdAt:-1,_id:-1}).skip((page-1)*limit).limit(limit).populate('rewardId','title').lean(),rewardModel.Redemption.countDocuments()]);
+    const ids=[...new Set(rows.map(row=>String(row.userId)))];const userRows=await users.User.find({_id:{$in:ids}}).select('name email publicId').lean();const byId=new Map(userRows.map(u=>[String(u._id),u]));
+    rows=rows.map(row=>({...rewardModel.toRedemption({...row,rewardId:row.rewardId?._id||row.rewardId}),rewardTitle:row.rewardId?.title||'Reward',user:byId.has(String(row.userId))?{id:String(row.userId),name:byId.get(String(row.userId)).name,email:byId.get(String(row.userId)).email,publicId:byId.get(String(row.userId)).publicId}:null}));
+  }else{const all=await rewardModel.listAllRedemptions();total=all.length;const pageRows=all.slice((page-1)*limit,page*limit);const userRows=await users.listUsers();const byId=new Map(userRows.map(user=>[String(user.id),user]));rows=pageRows.map(row=>({...row,user:byId.has(String(row.userId))?{id:String(row.userId),name:byId.get(String(row.userId)).name,email:byId.get(String(row.userId)).email,publicId:byId.get(String(row.userId)).publicId}:null}));}
+  successResponse(res,200,'Admin reward redemptions',{items:rows,total,page,limit,totalPages:Math.ceil(total/limit)});
+}catch(error){next(error);}});
 async function findUser(id) {
   const user=await users.findUserById(id);
   if(!user)throw new AppError('User not found',404);

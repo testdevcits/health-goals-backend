@@ -151,10 +151,14 @@ const findBySourceRecord = async (userId, source, sourceRecordId) => {
 };
 
 const getHealthRecordsByUserId = async (userId, filters = {}) => {
+  const from = filters.from ? new Date(filters.from) : null;
+  const to = filters.to ? new Date(filters.to) : null;
   if (!env.useMongoDB) {
     return healthRecords
       .filter((record) => record.user_id === userId)
       .filter((record) => !filters.metricType || record.metric_type === filters.metricType)
+      .filter((record) => !from || new Date(record.recorded_at) >= from)
+      .filter((record) => !to || new Date(record.recorded_at) <= to)
       .sort((a, b) => new Date(b.recorded_at) - new Date(a.recorded_at))
       .slice(0, 100)
       .map(toHealthRecord);
@@ -165,12 +169,32 @@ const getHealthRecordsByUserId = async (userId, filters = {}) => {
   if (filters.metricType) {
     query.metricType = filters.metricType;
   }
+  if (from || to) query.recordedAt = { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) };
 
   const records = await HealthRecord.find(query)
     .sort({ recordedAt: -1 })
     .limit(100);
 
   return records.map(toHealthRecord);
+};
+
+const getDailyHealthHistory = async (userId, { metricType, from, to }) => {
+  const start = new Date(from), end = new Date(to);
+  if (!env.useMongoDB) {
+    const groups = new Map();
+    healthRecords.filter(row => row.user_id === userId && row.metric_type === metricType && !row.deleted && new Date(row.recorded_at) >= start && new Date(row.recorded_at) <= end).forEach(row => {
+      const date = String(row.activityDate || row.recorded_at).slice(0, 10);
+      const item = groups.get(date) || { date, value: 0, count: 0, unit: row.unit };
+      item.value += Number(row.value); item.count += 1; groups.set(date, item);
+    });
+    return [...groups.values()].sort((a,b) => a.date.localeCompare(b.date));
+  }
+  const rows = await HealthRecord.aggregate([
+    { $match: { userId: new mongoose.Types.ObjectId(userId), metricType, deleted: { $ne: true }, recordedAt: { $gte: start, $lte: end } } },
+    { $group: { _id: { $ifNull: ['$activityDate', { $dateToString: { date: '$recordedAt', format: '%Y-%m-%d', timezone: 'Asia/Kolkata' } }] }, value: { $sum: '$value' }, count: { $sum: 1 }, unit: { $last: '$unit' } } },
+    { $sort: { _id: 1 } }
+  ]);
+  return rows.map(row => ({ date: row._id, value: row.value, count: row.count, unit: row.unit }));
 };
 
 const getDashboardByUserId = async (userId) => {
@@ -252,5 +276,6 @@ module.exports = {
   createHealthRecord,
   findBySourceRecord,
   getHealthRecordsByUserId,
+  getDailyHealthHistory,
   getDashboardByUserId
 };

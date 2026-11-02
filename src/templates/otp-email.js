@@ -1,14 +1,21 @@
 const escapeHtml = value => String(value).replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 
-module.exports = function otpEmail(otp) {
+module.exports = function otpEmail(otp, purpose = 'verification') {
   const code = escapeHtml(otp);
+  const isPasswordReset = purpose === 'password_reset';
+  const subject = isPasswordReset ? 'Reset your password • Health App' : 'Verify your email • Health App';
+  const heading = isPasswordReset ? 'Reset your password.' : 'One step closer.';
+  const kicker = isPasswordReset ? 'PASSWORD RESET' : 'ACCOUNT VERIFICATION';
+  const title = isPasswordReset ? 'Your password reset code' : 'Your verification code';
+  const intro = isPasswordReset ? 'Use this code to choose a new Health App password.' : 'Verify your email to continue to Health App.';
+  const instructions = isPasswordReset ? 'Enter this code on the password reset screen to choose a new password.' : 'Enter the code below on the verification screen to securely complete your registration or sign-in.';
   return {
-    subject: 'Verify your email • Health App',
-    text: `Health App\n\nVerify your email\n\nYour verification code is: ${otp}\n\nEnter this code in Health App to continue. It expires in 5 minutes and can only be used once.\n\nNever share this code with anyone. If you did not request it, you can ignore this email.\n\nHealth App | Account security`,
+    subject,
+    text: `Health App\n\n${isPasswordReset ? 'Reset your password' : 'Verify your email'}\n\nYour code is: ${otp}\n\n${instructions} It expires in 5 minutes and can only be used once.\n\nNever share this code with anyone. If you did not request it, you can ignore this email.\n\nHealth App | Account security`,
     html: `<!doctype html>
-<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>Verify your email</title></head>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="light"><title>${subject}</title></head>
 <body style="margin:0;padding:0;background-color:#f4f7f3;font-family:Arial,Helvetica,sans-serif;color:#243e35;">
-<div style="display:none;font-size:1px;line-height:1px;color:#f4f7f3;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">Your Health App verification code expires in 5 minutes.</div>
+<div style="display:none;font-size:1px;line-height:1px;color:#f4f7f3;max-height:0;max-width:0;opacity:0;overflow:hidden;mso-hide:all;">Your Health App ${isPasswordReset ? 'password reset' : 'verification'} code expires in 5 minutes.</div>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f4f7f3;"><tr><td align="center" style="padding:40px 16px;">
 <!--[if mso]><table role="presentation" width="520" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="max-width:520px;">
@@ -16,13 +23,13 @@ module.exports = function otpEmail(otp) {
 <tr><td style="background-color:#ffffff;border:1px solid #e0e8dc;border-radius:16px;overflow:hidden;">
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
 <tr><td style="padding:28px 28px 24px;background-color:#204f3e;color:#ffffff;border-radius:15px 15px 0 0;">
-<p style="margin:0 0 12px;font-size:10px;line-height:16px;letter-spacing:2px;color:#c6dbbf;font-weight:700;">ACCOUNT VERIFICATION</p>
-<h1 style="margin:0;font-size:28px;line-height:36px;letter-spacing:-0.5px;font-weight:700;">One step closer.</h1>
-<p style="margin:10px 0 0;font-size:14px;line-height:22px;color:#d8e5d4;">Verify your email to continue to Health App.</p>
+<p style="margin:0 0 12px;font-size:10px;line-height:16px;letter-spacing:2px;color:#c6dbbf;font-weight:700;">${kicker}</p>
+<h1 style="margin:0;font-size:28px;line-height:36px;letter-spacing:-0.5px;font-weight:700;">${heading}</h1>
+<p style="margin:10px 0 0;font-size:14px;line-height:22px;color:#d8e5d4;">${intro}</p>
 </td></tr>
 <tr><td style="padding:30px 28px;">
-<h2 style="margin:0 0 12px;font-size:20px;line-height:28px;color:#243e35;">Your verification code</h2>
-<p style="margin:0 0 24px;font-size:14px;line-height:23px;color:#6d7e70;">Enter the code below on the verification screen to securely complete your registration or sign-in.</p>
+<h2 style="margin:0 0 12px;font-size:20px;line-height:28px;color:#243e35;">${title}</h2>
+<p style="margin:0 0 24px;font-size:14px;line-height:23px;color:#6d7e70;">${instructions}</p>
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"><tr><td align="center" style="background-color:#f0f5ec;border:1px solid #dce7d4;border-radius:10px;padding:22px 8px;">
 <span style="font-family:'Courier New',monospace;font-size:36px;line-height:44px;letter-spacing:6px;font-weight:700;color:#204f3e;">${code}</span>
 </td></tr></table>

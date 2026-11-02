@@ -21,12 +21,13 @@ const app = express();
 app.use(helmet());
 app.use(cors(corsOptions));
 app.use(requestId);
-app.use(express.json());
+app.use(express.json({ limit: '7mb' }));
 app.use(morgan(env.nodeEnv === 'production' ? 'combined' : 'dev'));
 
 app.get('/api/health', healthController.serverHealth);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', require('./routes/admin.routes'));
+app.use('/api/v1/community', require('./routes/community.routes'));
 app.use('/api/v1/devices', deviceRoutes);
 app.use('/api/v1/health', healthRoutes);
 app.use('/api/v1/activity', require('./routes/activity.routes'));

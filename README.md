@@ -38,6 +38,8 @@ CORS_ORIGIN=http://localhost:3000
 
 Never commit real credentials.
 
+For Google sign-in, set `GOOGLE_CLIENT_ID` to the Google OAuth Web application client ID. The mobile app sends a Google ID token to `POST /api/v1/auth/google`; the backend verifies it before creating or signing in a user. Mobile registration supports optional `companyCode` and `goal` fields.
+
 For local API testing without MongoDB, set:
 
 ```env
@@ -66,12 +68,16 @@ npm run dev
 - `POST /api/v1/auth/refresh`
 - `POST /api/v1/auth/logout`
 - `GET /api/v1/auth/me`
+- `PATCH /api/v1/auth/me`
+- `PATCH /api/v1/auth/me/goals`
+- `POST /api/v1/auth/me/device`
 - `GET /api/v1/devices`
 - `POST /api/v1/devices`
 - `DELETE /api/v1/devices/:id`
 - `POST /api/v1/health/sync`
 - `POST /api/v1/health/records`
 - `GET /api/v1/health/records`
+- `GET /api/v1/health/history`
 - `GET /api/v1/health/summary`
 - `GET /api/v1/health/dashboard`
 - `GET /api/v1/wallet`
@@ -79,6 +85,11 @@ npm run dev
 - `POST /api/v1/rewards/:id/redeem`
 - `GET /api/v1/redemptions`
 - `GET /api/v1/redemptions/:id`
+- `GET /api/v1/admin/rewards`
+- `GET /api/v1/admin/redemptions`
+- `GET /api/v1/community/groups`
+- `POST /api/v1/community/groups`
+- `GET /api/v1/community/challenges`
 
 Protected endpoints require:
 
