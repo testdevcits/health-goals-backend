@@ -27,7 +27,7 @@ The server uses these MongoDB collections:
 Copy `.env.example` to `.env` and set local values:
 
 ```env
-PORT=5000
+PORT=8000
 NODE_ENV=development
 USE_MONGODB=true
 MONGODB_URI=mongodb://localhost:27017/health_app
@@ -56,6 +56,12 @@ Required production variables:
 - `ALLOWED_ORIGINS` — exact deployed admin frontend origin(s), comma-separated
 
 Set `GOOGLE_CLIENT_ID` if Google sign-in is enabled and set `ADMIN_EMAILS` to the admin account addresses. Vercel runs the settlement endpoint once daily at 18:30 UTC (midnight IST); on Hobby, invocation can be delayed within the scheduled hour. `GET /api/health` checks that the function is responding. After the first deployment, use the Vercel HTTPS domain as the API origin in the admin frontend and Android release build.
+
+### Realtime group chat
+
+Vercel serves the REST API and message history; it does not host the persistent Socket.IO connection. Create a separate long-running Web Service from the same repository, set its root directory to `backend`, use `npm ci` as the build command and `npm run start:socket` as the start command. Configure `MONGODB_URI`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `NODE_ENV=production`, and `USE_MONGODB=true` on that service. Its `/health` path is the service health check. The app's `HEALTH_CHAT_SOCKET_URL` must point to this service's HTTPS origin. The REST API and chat service must use the same database and JWT secret.
+
+The Socket.IO protocol authenticates with the existing access token. Join a room with `group:join` and `{ "groupId": "..." }`; send with `group:send` and `{ "groupId": "...", "message": "..." }`; saved messages arrive to room members as `group:message`. Message history remains available through the REST endpoint when the app reconnects.
 
 The local `backend/.env` is not uploaded. Add values in Vercel's environment variable settings; never paste secrets into source files or commit them.
 
@@ -123,13 +129,13 @@ Authorization: Bearer <jwt_token>
 Test server health:
 
 ```bash
-curl http://localhost:5000/api/health
+curl http://localhost:8000/api/health
 ```
 
 Register:
 
 ```bash
-curl -X POST http://localhost:5000/api/v1/auth/register \
+curl -X POST http://localhost:8000/api/v1/auth/register \
   -H "Content-Type: application/json" \
   -d '{"name":"Test User","email":"test@example.com","password":"password123"}'
 ```
@@ -137,7 +143,7 @@ curl -X POST http://localhost:5000/api/v1/auth/register \
 Login:
 
 ```bash
-curl -X POST http://localhost:5000/api/v1/auth/login \
+curl -X POST http://localhost:8000/api/v1/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"test@example.com","password":"password123"}'
 ```
@@ -145,7 +151,7 @@ curl -X POST http://localhost:5000/api/v1/auth/login \
 Create a Health Connect-ready record:
 
 ```bash
-curl -X POST http://localhost:5000/api/v1/health/records \
+curl -X POST http://localhost:8000/api/v1/health/records \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <jwt_token>" \
   -d '{
@@ -162,7 +168,7 @@ curl -X POST http://localhost:5000/api/v1/health/records \
 Sync Health Connect-ready records:
 
 ```bash
-curl -X POST http://localhost:5000/api/v1/health/sync \
+curl -X POST http://localhost:8000/api/v1/health/sync \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <jwt_token>" \
   -d '{
@@ -185,14 +191,14 @@ The backend uses `userId + source + sourceRecordId` for duplicate protection, so
 Get records:
 
 ```bash
-curl http://localhost:5000/api/v1/health/records \
+curl http://localhost:8000/api/v1/health/records \
   -H "Authorization: Bearer <jwt_token>"
 ```
 
 Get dashboard:
 
 ```bash
-curl http://localhost:5000/api/v1/health/dashboard \
+curl http://localhost:8000/api/v1/health/dashboard \
   -H "Authorization: Bearer <jwt_token>"
 ```
 

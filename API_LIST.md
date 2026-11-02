@@ -1,13 +1,13 @@
 # Developer API Guide
 
-Base URL (local, default port): **`http://localhost:5000/api/v1`**
+Base URL (local, default port): **`http://localhost:8000/api/v1`**
 
-Server URL: `http://localhost:5000`
-Health check: `GET http://localhost:5000/api/health`
+Server URL: `http://localhost:8000`
+Health check: `GET http://localhost:8000/api/health`
 
-`PORT` change hone par URL mein port bhi change karein. Deployed backend ka domain is guide mein assume nahi kiya gaya hai. Android emulator se local backend ke liye `http://10.0.2.2:5000/api/v1` use karein; physical phone par reachable computer LAN IP use karein.
+`PORT` change hone par URL mein port bhi change karein. Deployed backend ka domain is guide mein assume nahi kiya gaya hai. Android emulator se local backend ke liye `http://10.0.2.2:8000/api/v1` use karein; physical phone par reachable computer LAN IP use karein.
 
-Neeche har endpoint ka path Base URL ke baad add hoga. Example: `/auth/login` ka full URL `http://localhost:5000/api/v1/auth/login` hai.
+Neeche har endpoint ka path Base URL ke baad add hoga. Example: `/auth/login` ka full URL `http://localhost:8000/api/v1/auth/login` hai.
 
 ## Headers aur access
 
@@ -144,6 +144,8 @@ Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=
 | GET | `/community/groups/:id` | Group details; private group sirf members ke liye. |
 | POST | `/community/groups/:id/join` | Group join karein. |
 | GET/POST | `/community/groups/:id/messages` | Joined members ka chat history/send; send body `message`. |
+| Socket.IO | `group:join` | Auth token ke saath joined group room join karein; payload `{ groupId }`. |
+| Socket.IO | `group:send` | Payload `{ groupId, message }`; saved message group members ko `group:message` event mein milta hai. |
 | GET/POST | `/community/groups/:id/challenges` | Group challenges list/create. |
 | GET | `/community/challenges` | Active challenges list karein. |
 | POST | `/community/challenges` | Challenge banayein: `title`, `metricType`, `targetValue`, `endsAt`, optional `description`, `startsAt`, `rewardPoints`. |

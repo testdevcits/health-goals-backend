@@ -1,4 +1,6 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
 const cors = require('cors');
 const corsOptions = require('./config/cors');
 const helmet = require('helmet');
@@ -16,6 +18,8 @@ const redemptionRoutes = require('./routes/redemption.routes');
 const healthController = require('./controllers/health.controller');
 const { notFoundHandler, errorHandler } = require('./middleware/error.middleware');
 const { requestId } = require('./middleware/request-id.middleware');
+const { attachChatGateway } = require('./socket/chat.gateway');
+const { setIo } = require('./socket/io-instance');
 
 const app = express();
 
@@ -81,7 +85,15 @@ const startServer = async () => {
   try {
     await connectDatabase();
     settlementWorker.start();
-    const server = app.listen(env.port, () => {
+    const httpServer = http.createServer(app);
+    const io = new Server(httpServer, {
+      cors: { origin: corsOptions.origin, methods: ['GET', 'POST'] },
+      serveClient: false,
+      maxHttpBufferSize: 1000000
+    });
+    setIo(io);
+    attachChatGateway(io);
+    const server = httpServer.listen(env.port, () => {
       console.log(`Health App backend running on port ${env.port}`);
     });
     server.on('error', async (error) => {

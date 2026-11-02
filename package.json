@@ -5,6 +5,7 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
+    "start:socket": "node src/socket-server.js",
     "dev": "nodemon src/server.js",
     "test": "node --test test/*.test.js",
     "db:seed:demo": "node scripts/seed-demo-user.js"
@@ -32,6 +33,7 @@
     "mongoose": "^8.24.4",
     "morgan": "^1.10.0",
     "nodemailer": "^10.1.7",
+    "socket.io": "^4.8.4",
     "zod": "^4.6.5"
   },
   "devDependencies": {
