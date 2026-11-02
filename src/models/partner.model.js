@@ -1,0 +1,34 @@
+const mongoose = require('mongoose');
+const env = require('../config/env');
+const crypto = require('crypto');
+
+const partnerSchema = new mongoose.Schema({
+  name: { type: String, required: true, trim: true, maxlength: 100 },
+  email: { type: String, required: true, trim: true, lowercase: true, maxlength: 254 },
+  contactName: { type: String, default: '', maxlength: 100 },
+  category: { type: String, default: '', maxlength: 80 },
+  notes: { type: String, default: '', maxlength: 2000 },
+  status: { type: String, enum: ['PENDING', 'ACTIVE', 'INACTIVE'], default: 'PENDING', index: true },
+  keys: [{ keyId: String, environment: { type: String, enum: ['test', 'live'] }, prefix: String, hash: String, createdAt: Date, lastUsedAt: Date, revokedAt: Date }]
+}, { timestamps: true });
+partnerSchema.index({ email: 1 }, { unique: true });
+const Partner = mongoose.models.Partner || mongoose.model('Partner', partnerSchema);
+const CouponSubmission = mongoose.models.PartnerCoupon || mongoose.model('PartnerCoupon', new mongoose.Schema({ partnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Partner', required: true, index: true }, environment: { type: String, enum: ['test', 'live'], default: 'live' }, title: { type: String, required: true, maxlength: 100 }, description: { type: String, default: '', maxlength: 1000 }, terms: { type: String, default: '', maxlength: 3000 }, encryptedCode: { type: String, required: true }, codeHash: { type: String, required: true }, expiresAt: { type: Date, default: null }, status: { type: String, enum: ['PENDING', 'APPROVED', 'REJECTED'], default: 'PENDING', index: true }, reviewedAt: Date, reviewedBy: String }, { timestamps: true }));
+const memory = [], submissions = [];
+const dto = row => ({ id: String(row._id || row.id), name: row.name, email: row.email, contactName: row.contactName || '', category: row.category || '', notes: row.notes || '', status: row.status, keys: (row.keys || []).map(k => ({ keyId: k.keyId, environment: k.environment, prefix: k.prefix, createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, revokedAt: k.revokedAt || null })), createdAt: row.createdAt || row.created_at, updatedAt: row.updatedAt || row.updated_at });
+const couponDto = row => ({ id: String(row._id || row.id), partnerId: String(row.partnerId || row.partner_id), environment: row.environment || 'live', title: row.title, description: row.description || '', terms: row.terms || '', code: row.encryptedCode ? require('../services/voucher-code.service').decrypt(row.encryptedCode) : row.code, expiresAt: row.expiresAt || row.expires_at || null, status: row.status, createdAt: row.createdAt || row.created_at });
+async function create(input) {
+  if (env.useMongoDB) return dto(await Partner.create({ ...input, status: 'PENDING', keys: [] }));
+  if (memory.some(x => x.email === input.email)) { const error = new Error('Partner email already exists'); error.code = 11000; throw error; }
+  const row = { ...input, status: 'PENDING', keys: [], id: crypto.randomUUID(), created_at: new Date().toISOString() }; memory.unshift(row); return dto(row);
+}
+async function list() { return env.useMongoDB ? (await Partner.find().sort({ createdAt: -1 }).lean()).map(dto) : memory.map(dto); }
+async function find(id) { if (env.useMongoDB) return mongoose.isValidObjectId(id) ? Partner.findById(id) : null; return memory.find(x => x.id === id) || null; }
+async function update(id, fields) { if (env.useMongoDB) { const row = await Partner.findByIdAndUpdate(id, { $set: fields }, { new: true, runValidators: true }); return row ? dto(row) : null; } const row = memory.find(x => x.id === id); if (!row) return null; Object.assign(row, fields, { updated_at: new Date().toISOString() }); return dto(row); }
+async function addKey(id, environment, raw, hash) { const key = { keyId: crypto.randomUUID(), environment, prefix: raw.slice(0, 8), hash, createdAt: new Date() }; if (env.useMongoDB) { const row = await Partner.findByIdAndUpdate(id, { $push: { keys: key } }, { new: true }); return row ? dto(row) : null; } const row = memory.find(x => x.id === id); if (!row) return null; row.keys.push(key); return dto(row); }
+async function revokeKey(id, keyId) { if (env.useMongoDB) return Partner.findOneAndUpdate({ _id: id, 'keys.keyId': keyId }, { $set: { 'keys.$.revokedAt': new Date() } }, { new: true }).then(row => row ? dto(row) : null); const row = memory.find(x => x.id === id); const key = row?.keys.find(k => k.keyId === keyId); if (!key) return null; key.revokedAt = new Date(); return dto(row); }
+async function authenticateKey(raw) { const environment = raw.startsWith('HK-test-') ? 'test' : raw.startsWith('HK-live-') ? 'live' : null; if (!environment) return null; const hash = crypto.createHash('sha256').update(raw).digest('hex'); const query = { status: 'ACTIVE', keys: { $elemMatch: { hash, environment, revokedAt: null } } }; if (env.useMongoDB) { const partner = await Partner.findOne(query); if (!partner) return null; const key = partner.keys.find(k => k.hash === hash && k.environment === environment && !k.revokedAt); key.lastUsedAt = new Date(); await partner.save(); return { id: String(partner._id), status: partner.status, environment: key.environment }; } for (const partner of memory) { const key = partner.keys.find(k => k.hash === hash && k.environment === environment && !k.revokedAt); if (key && partner.status === 'ACTIVE') { key.lastUsedAt = new Date(); return { id: partner.id, status: partner.status, environment: key.environment }; } } return null; }
+async function submitCoupon(partnerId, input) { const codes=require('../services/voucher-code.service'); const row={partnerId,environment:input.environment||'live',title:input.title,description:input.description,terms:input.terms,encryptedCode:codes.encrypt(input.code),codeHash:codes.hash(input.code),expiresAt:input.expiresAt,status:'PENDING'}; if (env.useMongoDB) return couponDto(await CouponSubmission.create(row)); const item = { id: crypto.randomUUID(), ...row, created_at: new Date().toISOString() }; submissions.unshift(item); return couponDto(item); }
+async function listCoupons() { return env.useMongoDB ? (await CouponSubmission.find().sort({ createdAt: -1 }).lean()).map(couponDto) : submissions.map(couponDto); }
+async function reviewCoupon(id, status, adminId) { if (env.useMongoDB) { const row = await CouponSubmission.findByIdAndUpdate(id, { $set: { status, reviewedAt: new Date(), reviewedBy: adminId } }, { new: true }); return row ? couponDto(row) : null; } const row = submissions.find(x => x.id === id); if (!row) return null; Object.assign(row, { status, reviewedAt: new Date(), reviewedBy: adminId }); return couponDto(row); }
+module.exports = { Partner, CouponSubmission, dto, create, list, find, update, addKey, revokeKey, authenticateKey, submitCoupon, listCoupons, reviewCoupon };

@@ -57,6 +57,10 @@ Required production variables:
 
 Set `GOOGLE_CLIENT_ID` if Google sign-in is enabled and set `ADMIN_EMAILS` to the admin account addresses. Vercel runs the settlement endpoint once daily at 18:30 UTC (midnight IST); on Hobby, invocation can be delayed within the scheduled hour. `GET /api/health` checks that the function is responding. After the first deployment, use the Vercel HTTPS domain as the API origin in the admin frontend and Android release build.
 
+### Partner vouchers
+
+The admin Rewards page can store partner offers (for example, a gym discount or movie voucher) and import up to 500 coupon codes per upload, optionally with a batch expiry date. Set `VOUCHER_ENCRYPTION_KEY` in local and Vercel backend environment variables to a private random secret of at least 32 characters (generate one with `openssl rand -hex 32`). Imported codes are encrypted at rest, available inventory increments on import, and redemption assigns one unused code in the same MongoDB transaction that deducts reward points. Do not commit or share this key; changing it later makes previously encrypted vouchers unreadable. MongoDB Atlas transaction support is required. The partner must authorize your business to distribute its coupons; this feature does not itself obtain vouchers or establish a partnership.
+
 ### Realtime group chat
 
 Vercel serves the REST API and message history; it does not host the persistent Socket.IO connection. Create a separate long-running Web Service from the same repository, set its root directory to `backend`, use `npm ci` as the build command and `npm run start:socket` as the start command. Configure `MONGODB_URI`, `JWT_SECRET`, `JWT_REFRESH_SECRET`, `NODE_ENV=production`, and `USE_MONGODB=true` on that service. Its `/health` path is the service health check. The app's `HEALTH_CHAT_SOCKET_URL` must point to this service's HTTPS origin. The REST API and chat service must use the same database and JWT secret.

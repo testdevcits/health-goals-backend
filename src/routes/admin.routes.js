@@ -7,6 +7,7 @@ const query = require('../services/admin-query.service');
 const wallet = require('../models/wallet.model');
 const rewardModel = require('../models/reward.model');
 const audit = require('../models/audit.model');
+const partnerModel = require('../models/partner.model');
 const { successResponse } = require('../utils/response');
 const { authLimiter, adminWriteLimiter } = require('../middleware/rate-limit.middleware');
 router.use(authenticate);
@@ -15,18 +16,25 @@ const coinRules=require('../services/coin-rules.service');
 router.get('/coin-rules',async(req,res,next)=>{try{const {page,limit}=query.buildQuery('users',req.query);successResponse(res,200,'Coin rule versions',await coinRules.list(page,limit));}catch(error){next(error);}});
 router.post('/coin-rules',adminWriteLimiter,async(req,res,next)=>{try{successResponse(res,201,'New coin rule version scheduled',await coinRules.create(req.body,req.user.id));}catch(error){next(error);}});
 router.get('/overview',async(req,res,next)=>{try{successResponse(res,200,'Admin overview',await query.overview());}catch(error){next(error);}});
+router.get('/partners',async(req,res,next)=>{try{successResponse(res,200,'Partners',{items:await partnerModel.list()});}catch(error){next(error);}});
+router.post('/partners',adminWriteLimiter,async(req,res,next)=>{try{const body=req.body||{};const name=typeof body.name==='string'?body.name.trim():'';const email=typeof body.email==='string'?body.email.trim().toLowerCase():'';if(name.length<2||name.length>100)throw new AppError('Partner name must be 2 to 100 characters',400);if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new AppError('Enter a valid partner email',400);for(const field of ['contactName','category','notes'])if(body[field]!==undefined&&(typeof body[field]!=='string'||body[field].length>(field==='notes'?2000:100)))throw new AppError(`Invalid ${field}`,400);const partner=await partnerModel.create({name,email,contactName:(body.contactName||'').trim(),category:(body.category||'').trim(),notes:(body.notes||'').trim()});await audit.createAuditLog({userId:req.user.id,action:'ADMIN_PARTNER_CREATED',metadata:{partnerId:partner.id,email},requestId:req.requestId});successResponse(res,201,'Partner added for review',{partner});}catch(error){if(error.code===11000)error=new AppError('A partner with this email already exists',409);next(error);}});
+router.patch('/partners/:id',adminWriteLimiter,async(req,res,next)=>{try{const current=await partnerModel.find(req.params.id);if(!current)throw new AppError('Partner not found',404);const body=req.body||{},fields={};if(body.status!==undefined){if(!['PENDING','ACTIVE','INACTIVE'].includes(body.status))throw new AppError('Invalid partner status',400);fields.status=body.status;}for(const field of ['name','email','contactName','category','notes'])if(body[field]!==undefined){if(typeof body[field]!=='string')throw new AppError(`Invalid ${field}`,400);fields[field]=body[field].trim();}if(fields.email!==undefined&&!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(fields.email))throw new AppError('Enter a valid partner email',400);const partner=await partnerModel.update(req.params.id,fields);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_PARTNER_UPDATED',metadata:{partnerId:partner.id,changes:Object.keys(fields)},requestId:req.requestId});successResponse(res,200,'Partner updated',{partner});}catch(error){next(error);}});
+router.post('/partners/:id/keys',adminWriteLimiter,async(req,res,next)=>{try{const partner=await partnerModel.find(req.params.id);if(!partner)throw new AppError('Partner not found',404);const environment=req.body?.environment;if(!['test','live'].includes(environment))throw new AppError('Environment must be test or live',400);if(environment==='live'&&partner.status!=='ACTIVE')throw new AppError('Approve and activate the partner before issuing a live key',409);const prefix=environment==='live'?'HK-live-':'HK-test-';const raw=`${prefix}${require('crypto').randomBytes(32).toString('base64url')}`;const hash=require('crypto').createHash('sha256').update(raw).digest('hex');const updated=await partnerModel.addKey(req.params.id,environment,raw,hash);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_PARTNER_KEY_ISSUED',metadata:{partnerId:updated.id,environment,prefix:raw.slice(0,11)},requestId:req.requestId});successResponse(res,201,'API key issued. Copy it now; it will not be shown again.',{partner:updated,apiKey:raw});}catch(error){next(error);}});
+router.delete('/partners/:id/keys/:keyId',adminWriteLimiter,async(req,res,next)=>{try{const partner=await partnerModel.revokeKey(req.params.id,req.params.keyId);if(!partner)throw new AppError('API key not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_PARTNER_KEY_REVOKED',metadata:{partnerId:partner.id,keyId:req.params.keyId},requestId:req.requestId});successResponse(res,200,'API key revoked',{partner});}catch(error){next(error);}});
+router.get('/partner-coupons',async(req,res,next)=>{try{successResponse(res,200,'Partner coupon submissions',{items:await partnerModel.listCoupons()});}catch(error){next(error);}});
+router.patch('/partner-coupons/:id',adminWriteLimiter,async(req,res,next)=>{try{const status=req.body?.status;if(!['APPROVED','REJECTED'].includes(status))throw new AppError('Status must be APPROVED or REJECTED',400);const coupon=await partnerModel.reviewCoupon(req.params.id,status,req.user.id);if(!coupon)throw new AppError('Coupon not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_PARTNER_COUPON_REVIEWED',metadata:{couponId:coupon.id,status},requestId:req.requestId});successResponse(res,200,'Partner coupon reviewed',{coupon});}catch(error){next(error);}});
 for(const kind of ['users','records','devices']) router.get(`/${kind}`,async(req,res,next)=>{try{successResponse(res,200,`Admin ${kind}`,await query.list(kind,req.query));}catch(error){next(error);}});
 router.get('/rewards',async(req,res,next)=>{try{
   const page=Number(req.query.page||1),limit=Number(req.query.limit||20);
   if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>100)throw new AppError('Invalid pagination parameters',400);
   let items,total;
-  if(env.useMongoDB){const [rows,count]=await Promise.all([rewardModel.Reward.find().sort({createdAt:-1,_id:-1}).skip((page-1)*limit).limit(limit).lean(),rewardModel.Reward.countDocuments()]);items=rows.map(rewardModel.toReward);total=count;}
-  else {const rows=await rewardModel.listAllRewards();total=rows.length;items=rows.slice((page-1)*limit,page*limit);}
+  if(env.useMongoDB){const [rows,count]=await Promise.all([rewardModel.Reward.find().sort({createdAt:-1,_id:-1}).skip((page-1)*limit).limit(limit).lean(),rewardModel.Reward.countDocuments()]);items=await Promise.all(rows.map(async row=>({...rewardModel.toReward(row),availableVoucherCount:await rewardModel.countAvailableVoucherCodes(row._id)})));total=count;}
+  else {const rows=await rewardModel.listAllRewards();total=rows.length;items=await Promise.all(rows.slice((page-1)*limit,page*limit).map(async row=>({...row,availableVoucherCount:await rewardModel.countAvailableVoucherCodes(row.id)})));}
   successResponse(res,200,'Admin rewards',{items,total,page,limit,totalPages:Math.ceil(total/limit)});
 }catch(error){next(error);}});
 function rewardPayload(body, partial=false){
   const payload={};
-  for(const field of ['title','description','provider','terms','status']) if(body?.[field]!==undefined)payload[field]=body[field];
+  for(const field of ['title','description','provider','partnerId','terms','status']) if(body?.[field]!==undefined)payload[field]=body[field];
   for(const field of ['pointsRequired','stock']) if(body?.[field]!==undefined)payload[field]=Number(body[field]);
   for(const field of ['startAt','endAt']) if(body?.[field]!==undefined)payload[field]=body[field] ? new Date(body[field]) : null;
   if(!partial&&!payload.title)throw new AppError('Reward title is required',400);
@@ -41,8 +49,25 @@ function rewardPayload(body, partial=false){
   if(payload.title)payload.title=payload.title.trim();
   return payload;
 }
-router.post('/rewards',adminWriteLimiter,async(req,res,next)=>{try{const reward=await rewardModel.createReward(rewardPayload(req.body));await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_CREATED',metadata:{rewardId:reward.id,title:reward.title},requestId:req.requestId});successResponse(res,201,'Reward created',{reward});}catch(error){next(error);}});
-router.patch('/rewards/:id',adminWriteLimiter,async(req,res,next)=>{try{const reward=await rewardModel.updateReward(req.params.id,rewardPayload(req.body,true));if(!reward)throw new AppError('Reward not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_UPDATED',metadata:{rewardId:reward.id,changes:Object.keys(req.body||{})},requestId:req.requestId});successResponse(res,200,'Reward updated',{reward});}catch(error){next(error);}});
+async function attachPartner(payload){if(!payload.partnerId)return payload;const partner=await partnerModel.find(payload.partnerId);if(!partner||partner.status!=='ACTIVE')throw new AppError('Select an approved active partner',400);payload.provider=partner.name;return payload;}
+router.post('/rewards',adminWriteLimiter,async(req,res,next)=>{try{const reward=await rewardModel.createReward(await attachPartner(rewardPayload(req.body)));await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_CREATED',metadata:{rewardId:reward.id,title:reward.title},requestId:req.requestId});successResponse(res,201,'Reward created',{reward});}catch(error){next(error);}});
+router.patch('/rewards/:id',adminWriteLimiter,async(req,res,next)=>{try{const reward=await rewardModel.updateReward(req.params.id,await attachPartner(rewardPayload(req.body,true)));if(!reward)throw new AppError('Reward not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_UPDATED',metadata:{rewardId:reward.id,changes:Object.keys(req.body||{})},requestId:req.requestId});successResponse(res,200,'Reward updated',{reward});}catch(error){next(error);}});
+router.post('/rewards/:id/vouchers',adminWriteLimiter,async(req,res,next)=>{try{
+  const reward=await rewardModel.findRewardById(req.params.id);if(!reward)throw new AppError('Reward not found',404);
+  const input=req.body?.codes;
+  if(!Array.isArray(input)||input.length<1||input.length>500)throw new AppError('Provide 1 to 500 voucher codes',400);
+  let expiresAt=null;if(req.body?.expiresAt){expiresAt=new Date(req.body.expiresAt);if(!Number.isFinite(+expiresAt)||expiresAt<=new Date())throw new AppError('Voucher expiry must be a future date',400);}
+  const codeService=require('../services/voucher-code.service');
+  const seen=new Set();const rows=[];
+  for(const raw of input){if(typeof raw!=='string')throw new AppError('Voucher codes must be text',400);const code=raw.trim();if(!code||code.length>160)throw new AppError('Each voucher code must be 1 to 160 characters',400);const codeHash=codeService.hash(code);if(seen.has(codeHash))continue;seen.add(codeHash);rows.push({codeHash,encryptedCode:codeService.encrypt(code),expiresAt});}
+  if(!rows.length)throw new AppError('No unique voucher codes to import',400);
+  let imported;
+  if(env.useMongoDB){const mongoose=require('mongoose');imported=await mongoose.connection.transaction(async session=>rewardModel.importVoucherCodes(req.params.id,rows,session));}
+  else imported=await rewardModel.importVoucherCodes(req.params.id,rows);
+  await audit.createAuditLog({userId:req.user.id,action:'ADMIN_VOUCHERS_IMPORTED',metadata:{rewardId:req.params.id,count:imported},requestId:req.requestId});
+  successResponse(res,201,'Voucher codes imported',{imported,availableVoucherCount:await rewardModel.countAvailableVoucherCodes(req.params.id)});
+}catch(error){if(error.code===11000)error=new AppError('One or more voucher codes already exist in inventory',409);next(error);}});
+router.get('/rewards/:id/vouchers',async(req,res,next)=>{try{const reward=await rewardModel.findRewardById(req.params.id);if(!reward)throw new AppError('Reward not found',404);successResponse(res,200,'Voucher inventory count',{availableVoucherCount:await rewardModel.countAvailableVoucherCodes(req.params.id)});}catch(error){next(error);}});
 router.get('/redemptions',async(req,res,next)=>{try{
   const page=Number(req.query.page||1),limit=Number(req.query.limit||20);
   if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>100)throw new AppError('Invalid pagination parameters',400);

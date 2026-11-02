@@ -70,6 +70,7 @@ if (process.env.VERCEL === '1') {
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', require('./routes/admin.routes'));
+app.use('/api/v1/partner', require('./routes/partner.routes'));
 app.use('/api/v1/community', require('./routes/community.routes'));
 app.use('/api/v1/devices', deviceRoutes);
 app.use('/api/v1/health', healthRoutes);

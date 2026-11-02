@@ -130,7 +130,7 @@ Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=
 |---|---|---|
 | GET | `/wallet` | Wallet balance, transactions aur `dailyActivity`. Embedded transactions maximum 100; older ledger ke liye `/activity/transactions`. |
 | GET | `/rewards` | Available reward catalogue. |
-| POST | `/rewards/:id/redeem` | Reward redeem karein; `:id` catalogue se reward ID. Body required nahi. |
+| POST | `/rewards/:id/redeem` | Reward redeem karein; wallet points transactionally deduct hote hain aur partner ka ek unused voucher code milta hai. Body required nahi. |
 | GET | `/redemptions` | Apni redemption history. |
 | GET | `/redemptions/:id` | Ek apni redemption ki details. |
 
@@ -164,8 +164,10 @@ Yahan `:id` user ka **internal `id`** hai; `USR-...` wala permanent `publicId` l
 | GET | `/admin/devices` | Paginated devices; `page`, `limit`, `q`, `from`, `to`, `userId`, `status`, `platform`, `model`. |
 | GET | `/admin/rewards` | Paginated reward catalogue including inactive/out-of-stock entries; `page`, `limit`. |
 | GET | `/admin/redemptions` | Paginated redemption history with user and reward details; `page`, `limit`. |
-| POST | `/admin/rewards` | Reward create karein; `name`, `description`, `pointsCost`, optional `stock`, `imageUrl`, `isActive`. |
+| POST | `/admin/rewards` | Reward create karein: `title`, `pointsRequired`, optional `description`, `provider` (partner), `terms`, `status`, `startAt`, `endAt`. |
 | PATCH | `/admin/rewards/:id` | Reward details, stock, ya active state update karein. |
+| POST | `/admin/rewards/:id/vouchers` | Partner vouchers import karein: `{"codes":["CODE-1","CODE-2"],"expiresAt":"2030-12-31"}`; expiry optional, 1–500 codes, one-use assignment. Codes encrypted at rest. |
+| GET | `/admin/rewards/:id/vouchers` | Sirf available voucher count deta hai; codes expose nahi karta. |
 | GET | `/admin/users/:id` | Profile, wallet, record/device counts aur `canChangeStatus`. |
 | PATCH | `/admin/users/:id/status` | Body: `{"status":"ACTIVE"}` ya `{"status":"SUSPENDED"}`. Self/admin accounts ka status yahan change nahi hota. Status change existing sessions revoke karta hai. |
 | GET | `/admin/users/:id/steps` | Date-wise reported/counted steps; `page`, `limit`, `from`, `to`. |
@@ -247,3 +249,11 @@ Common statuses: `200` success, `201` created, `202` OTP challenge, `400` invali
 7. Admin screens mein allowlisted session se admin APIs call karein.
 
 Source: current backend route/controller/service implementation. Total: **37 versioned APIs + 1 public server health check = 38 method-path combinations**. This guide documents code; live server connectivity is not verified here.
+# Partner integration
+
+- Admin: `GET/POST /api/v1/admin/partners`; `PATCH /api/v1/admin/partners/:id` manages partner records and approval status.
+- Admin: `POST /api/v1/admin/partners/:id/keys` with `{ "environment": "test" | "live" }` issues an `HK-test-...` or `HK-live-...` key. The raw key is returned once. `DELETE /api/v1/admin/partners/:id/keys/:keyId` revokes it.
+- Partner: `POST /api/v1/partner/coupons` with `X-Partner-Key: HK-test-...` or `HK-live-...` and `{ "title", "description", "terms", "code", "expiresAt" }` submits a coupon for admin review. Partner keys only work while the partner is active.
+- Admin: `GET /api/v1/admin/partner-coupons` lists submissions and `PATCH /api/v1/admin/partner-coupons/:id` with `{ "status": "APPROVED" | "REJECTED" }` records review.
+
+Partner keys are stored as SHA-256 hashes; coupon codes are encrypted using `VOUCHER_ENCRYPTION_KEY`. Keep that secret stable and configure it in each backend environment. Test submissions remain marked `test`; approving a submission does not automatically publish it as a user reward. Select the approved partner in Rewards and manage redemption inventory there.

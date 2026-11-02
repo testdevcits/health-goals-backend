@@ -24,7 +24,7 @@ const addPoints = async ({ userId, amount, referenceType, referenceId, descripti
   });
 };
 
-const deductPoints = async ({ userId, amount, referenceType, referenceId, description, idempotencyKey }) => {
+const deductPoints = async ({ userId, amount, referenceType, referenceId, description, idempotencyKey, session = null }) => {
   try {
     return await walletModel.createTransaction({
       userId,
@@ -33,7 +33,8 @@ const deductPoints = async ({ userId, amount, referenceType, referenceId, descri
       referenceType,
       referenceId,
       description,
-      idempotencyKey
+      idempotencyKey,
+      session
     });
   } catch (error) {
     if (error.message === 'INSUFFICIENT_POINTS') {

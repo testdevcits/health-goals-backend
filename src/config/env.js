@@ -25,6 +25,7 @@ module.exports = {
   port: Number(process.env.PORT) || 8000,
   useMongoDB,
   mongoUri: process.env.MONGODB_URI,
+  voucherEncryptionKey: process.env.VOUCHER_ENCRYPTION_KEY || '',
   adminEmails: (process.env.ADMIN_EMAILS || '').split(',').map(v => v.trim().toLowerCase()).filter(Boolean),
   googleClientId: process.env.GOOGLE_CLIENT_ID || '',
   cloudinary: {

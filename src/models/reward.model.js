@@ -12,6 +12,7 @@ const rewardSchema = new mongoose.Schema(
     endAt: { type: Date, default: null },
     status: { type: String, enum: ['ACTIVE', 'INACTIVE', 'EXPIRED'], default: 'ACTIVE' },
     provider: { type: String, default: null },
+    partnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Partner', default: null, index: true },
     terms: { type: String, default: '' }
   },
   { timestamps: true }
@@ -32,8 +33,20 @@ const redemptionSchema = new mongoose.Schema(
 
 const Reward = mongoose.model('Reward', rewardSchema);
 const Redemption = mongoose.model('Redemption', redemptionSchema);
+const voucherCodeSchema = new mongoose.Schema({
+  rewardId: { type: mongoose.Schema.Types.ObjectId, ref: 'Reward', required: true, index: true },
+  codeHash: { type: String, required: true, unique: true },
+  encryptedCode: { type: String, required: true },
+  expiresAt: { type: Date, default: null },
+  status: { type: String, enum: ['AVAILABLE', 'ASSIGNED'], default: 'AVAILABLE', index: true },
+  redemptionId: { type: mongoose.Schema.Types.ObjectId, ref: 'Redemption', default: null },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', default: null }
+}, { timestamps: true });
+voucherCodeSchema.index({ rewardId: 1, status: 1, createdAt: 1 });
+const VoucherCode = mongoose.model('VoucherCode', voucherCodeSchema);
 const rewards = [];
 const redemptions = [];
+const memoryVoucherCodes = [];
 
 const seedRewards = () => {
   if (rewards.length > 0) return;
@@ -59,6 +72,7 @@ const toReward = (reward) => ({
   stock: reward.stock,
   status: reward.status,
   provider: reward.provider,
+  partnerId: reward.partnerId ? String(reward.partnerId._id || reward.partnerId) : null,
   terms: reward.terms,
   startAt: reward.startAt || reward.start_at,
   endAt: reward.endAt || reward.end_at,
@@ -72,7 +86,7 @@ const toRedemption = (redemption) => ({
   rewardId: redemption.rewardId || redemption.reward_id,
   pointsUsed: redemption.pointsUsed ?? redemption.points_used,
   status: redemption.status,
-  redemptionCode: redemption.redemptionCode || redemption.redemption_code,
+  redemptionCode: (() => { const value = redemption.redemptionCode || redemption.redemption_code; return value?.startsWith('enc1:') ? require('../services/voucher-code.service').decrypt(value.slice(5)) : value; })(),
   expiresAt: redemption.expiresAt || redemption.expires_at,
   redeemedAt: redemption.redeemedAt || redemption.redeemed_at,
   createdAt: redemption.createdAt || redemption.created_at
@@ -87,7 +101,7 @@ const listAllRedemptions = async () => env.useMongoDB
 
 const createReward = async payload => env.useMongoDB
   ? toReward(await Reward.create(payload))
-  : (rewards.push({ ...payload, id: crypto.randomUUID(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() }), toReward(rewards[rewards.length - 1]));
+  : (rewards.push({ stock: 0, ...payload, id: crypto.randomUUID(), created_at: new Date().toISOString(), updated_at: new Date().toISOString() }), toReward(rewards[rewards.length - 1]));
 const updateReward = async (id, payload) => {
   if (env.useMongoDB) {
     const row = await Reward.findByIdAndUpdate(id, { $set: payload }, { new: true, runValidators: true });
@@ -102,7 +116,8 @@ const updateReward = async (id, payload) => {
 const getActiveRewards = async () => {
   if (!env.useMongoDB) {
     seedRewards();
-    return rewards.filter((reward) => reward.status === 'ACTIVE' && reward.stock > 0).map(toReward);
+    return rewards.filter((reward) => reward.status === 'ACTIVE' && reward.stock > 0 && memoryVoucherCodes.some(code => code.rewardId === reward.id && code.status === 'AVAILABLE'))
+      .map(reward => ({ ...toReward(reward), availableVoucherCount: memoryVoucherCodes.filter(code => code.rewardId === reward.id && code.status === 'AVAILABLE').length }));
   }
 
   const now = new Date();
@@ -114,7 +129,8 @@ const getActiveRewards = async () => {
       { $or: [{ endAt: null }, { endAt: { $gte: now } }] }
     ]
   }).sort({ pointsRequired: 1 });
-  return rows.map(toReward);
+  return (await Promise.all(rows.map(async row => ({ ...toReward(row), availableVoucherCount: await countAvailableVoucherCodes(row._id) }))))
+    .filter(row => row.availableVoucherCount > 0);
 };
 
 const findRewardById = async (id) => {
@@ -144,9 +160,9 @@ const decrementStock = async (id) => {
   return Boolean(reward);
 };
 
-const createRedemption = async ({ userId, rewardId, pointsUsed }) => {
-  const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  const redemptionCode = `RD-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
+const createRedemption = async ({ userId, rewardId, pointsUsed, redemptionCode, expiresAt: voucherExpiry = null, session = null }) => {
+  const expiresAt = voucherExpiry || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const issuedCode = redemptionCode ? `enc1:${require('../services/voucher-code.service').encrypt(redemptionCode)}` : `RD-${crypto.randomBytes(4).toString('hex').toUpperCase()}`;
 
   if (!env.useMongoDB) {
     const redemption = {
@@ -155,7 +171,7 @@ const createRedemption = async ({ userId, rewardId, pointsUsed }) => {
       reward_id: rewardId,
       points_used: pointsUsed,
       status: 'ISSUED',
-      redemption_code: redemptionCode,
+      redemption_code: issuedCode,
       expires_at: expiresAt.toISOString(),
       redeemed_at: null,
       created_at: new Date().toISOString()
@@ -164,14 +180,47 @@ const createRedemption = async ({ userId, rewardId, pointsUsed }) => {
     return toRedemption(redemption);
   }
 
-  const redemption = await Redemption.create({
+  const [redemption] = await Redemption.create([{
     userId,
     rewardId,
     pointsUsed,
-    redemptionCode,
+    redemptionCode: issuedCode,
     expiresAt
-  });
+  }], session ? { session } : undefined);
   return toRedemption(redemption);
+};
+
+const importVoucherCodes = async (rewardId, rows, session = null) => {
+  if (!env.useMongoDB) {
+    const reward = rewards.find(row => row.id === rewardId);
+    if (!reward) return 0;
+    const known = new Set(memoryVoucherCodes.map(row => row.codeHash));
+    const fresh = rows.filter(row => { if (known.has(row.codeHash)) return false; known.add(row.codeHash); return true; });
+    memoryVoucherCodes.push(...fresh.map(row => ({ ...row, rewardId, status: 'AVAILABLE', id: crypto.randomUUID() })));
+    reward.stock += fresh.length;
+    reward.updated_at = new Date().toISOString();
+    return fresh.length;
+  }
+  await VoucherCode.insertMany(rows.map(row => ({ rewardId, ...row })), { ordered: true, ...(session ? { session } : {}) });
+  const updated = await Reward.updateOne({ _id: rewardId }, { $inc: { stock: rows.length } }, session ? { session } : {});
+  return updated.modifiedCount ? rows.length : 0;
+};
+const countAvailableVoucherCodes = rewardId => env.useMongoDB
+  ? VoucherCode.countDocuments({ rewardId, status: 'AVAILABLE' })
+  : memoryVoucherCodes.filter(row => row.rewardId === rewardId && row.status === 'AVAILABLE').length;
+const assignVoucherCode = async (rewardId, userId, redemptionId, session) => {
+  if (!env.useMongoDB) {
+    const row = memoryVoucherCodes.find(item => item.rewardId === rewardId && item.status === 'AVAILABLE');
+    if (!row) return null;
+    row.status = 'ASSIGNED'; row.userId = userId; row.redemptionId = redemptionId;
+    return row;
+  }
+  const row = await VoucherCode.findOneAndUpdate(
+    { rewardId, status: 'AVAILABLE' },
+    { $set: { status: 'ASSIGNED', userId, redemptionId } },
+    { new: true, sort: { createdAt: 1, _id: 1 }, session }
+  );
+  return row;
 };
 
 const getRedemptionsByUserId = async (userId) => {
@@ -196,10 +245,14 @@ const getRedemptionById = async (userId, id) => {
 module.exports = {
   Reward,
   Redemption,
+  VoucherCode,
   getActiveRewards,
   findRewardById,
   decrementStock,
   createRedemption,
+  importVoucherCodes,
+  countAvailableVoucherCodes,
+  assignVoucherCode,
   getRedemptionsByUserId,
   getRedemptionById,
   listAllRewards,
