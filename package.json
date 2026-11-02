@@ -1,0 +1,36 @@
+{
+  "name": "health-app-backend",
+  "version": "1.0.0",
+  "description": "REST API backend for the Health App project.",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "nodemon src/server.js",
+    "test": "node --test test/*.test.js",
+    "db:seed:demo": "node scripts/seed-demo-user.js"
+  },
+  "keywords": [
+    "health",
+    "express",
+    "mongodb",
+    "rest-api"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^8.7.0",
+    "helmet": "^7.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.24.4",
+    "morgan": "^1.10.0",
+    "nodemailer": "^10.1.7",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  }
+}
