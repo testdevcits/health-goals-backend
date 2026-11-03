@@ -10,7 +10,7 @@ const connectDatabase = async () => {
   await mongoose.connect(env.mongoUri);
   {
     const hello = await mongoose.connection.db.admin().command({ hello: 1 });
-    if (!hello.setName && hello.msg !== 'isdbgrid') throw new Error('Daily coin settlement requires MongoDB Atlas or a replica set for atomic transactions. Standalone MongoDB is not supported.');
+    if (!hello.setName && hello.msg !== 'isdbgrid') throw new Error('Daily point settlement requires MongoDB Atlas or a replica set for atomic transactions. Standalone MongoDB is not supported.');
   }
   // Collections and unique indexes must exist before transactional ingestion.
   require('../services/activity-ingestion.service');

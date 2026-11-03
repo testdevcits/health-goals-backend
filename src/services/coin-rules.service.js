@@ -15,7 +15,7 @@ const schema = new mongoose.Schema({
 schema.index({ effectiveFrom: -1, createdAt: -1, _id: -1 });
 const CoinRuleVersion = mongoose.model('CoinRuleVersion', schema);
 const memoryVersions = [];
-const baseline = () => ({version:RULES.version,effectiveFrom:'0001-01-01',rules:{...RULES},note:'Original daily coin rules',createdAt:null});
+const baseline = () => ({version:RULES.version,effectiveFrom:'0001-01-01',rules:{...RULES},note:'Original daily point rules',createdAt:null});
 function validDay(day) {
  if(typeof day!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(day)||!Number.isFinite(+new Date(day))||new Date(day).toISOString().slice(0,10)!==day) throw new AppError('Invalid day',400);
 }
@@ -37,9 +37,9 @@ async function list(page=1,limit=20,now=new Date()) {
  return {items,total,page,limit,totalPages:Math.ceil(total/limit),current,latest:latest||baseline(),baseline:baseline(),nextEffectiveFrom:dayKey(dayEnd(today))};
 }
 async function create(payload,adminId,now=new Date()) {
- if(!payload||typeof payload!=='object'||Array.isArray(payload)) throw new AppError('Coin rules are required',400);
+ if(!payload||typeof payload!=='object'||Array.isArray(payload)) throw new AppError('Point rules are required',400);
  const {rules,note,baseVersion}=payload;
- if(!rules||typeof rules!=='object'||Array.isArray(rules)||Object.keys(rules).some(key=>!fields.includes(key))) throw new AppError('Provide supported coin rule fields only',400);
+ if(!rules||typeof rules!=='object'||Array.isArray(rules)||Object.keys(rules).some(key=>!fields.includes(key))) throw new AppError('Provide supported point rule fields only',400);
  for(const field of fields) {
   const max=['stepsPerTier'].includes(field)?200000:['workoutMinutes','meditationMinutes'].includes(field)?1440:100000;
   const min=['stepsPerTier','workoutMinutes','meditationMinutes'].includes(field)?1:0;
@@ -47,13 +47,13 @@ async function create(payload,adminId,now=new Date()) {
  }
  if(typeof note!=='string'||!note.trim()||note.trim().length>500) throw new AppError('A change reason (1–500 characters) is required',400);
  const latest=env.useMongoDB?await CoinRuleVersion.findOne().sort({createdAt:-1,_id:-1}).lean():memoryVersions.at(-1);
- if(baseVersion!==(latest?.version||RULES.version)) throw new AppError('Coin rules changed. Reload before saving a new version.',409);
+ if(baseVersion!==(latest?.version||RULES.version)) throw new AppError('Point rules changed. Reload before saving a new version.',409);
  const version=`daily-${crypto.randomUUID()}`;
  const entry={version,parentVersion:baseVersion,effectiveFrom:dayKey(dayEnd(dayKey(now))),rules:{...rules,version,timezone:RULES.timezone},createdBy:adminId,note:note.trim(),createdAt:now};
  try {
   if(env.useMongoDB) return (await CoinRuleVersion.create(entry)).toObject();
   // No await between the conflict check and append in temporary storage.
   memoryVersions.push(entry);return structuredClone(entry);
- } catch(error) {if(error.code===11000)throw new AppError('Coin rules changed. Reload before saving a new version.',409);throw error;}
+ } catch(error) {if(error.code===11000)throw new AppError('Point rules changed. Reload before saving a new version.',409);throw error;}
 }
 module.exports={CoinRuleVersion,forDay,list,create,fields,validDay};

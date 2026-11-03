@@ -13,8 +13,8 @@ const { authLimiter, adminWriteLimiter } = require('../middleware/rate-limit.mid
 router.use(authenticate);
 router.use((req,res,next)=>env.adminEmails.includes(req.user.email.toLowerCase()) ? next() : next(new AppError('Admin access required',403)));
 const coinRules=require('../services/coin-rules.service');
-router.get('/coin-rules',async(req,res,next)=>{try{const {page,limit}=query.buildQuery('users',req.query);successResponse(res,200,'Coin rule versions',await coinRules.list(page,limit));}catch(error){next(error);}});
-router.post('/coin-rules',adminWriteLimiter,async(req,res,next)=>{try{successResponse(res,201,'New coin rule version scheduled',await coinRules.create(req.body,req.user.id));}catch(error){next(error);}});
+router.get('/coin-rules',async(req,res,next)=>{try{const {page,limit}=query.buildQuery('users',req.query);successResponse(res,200,'Point rule versions',await coinRules.list(page,limit));}catch(error){next(error);}});
+router.post('/coin-rules',adminWriteLimiter,async(req,res,next)=>{try{successResponse(res,201,'New point rule version scheduled',await coinRules.create(req.body,req.user.id));}catch(error){next(error);}});
 router.get('/overview',async(req,res,next)=>{try{successResponse(res,200,'Admin overview',await query.overview());}catch(error){next(error);}});
 router.get('/partners',async(req,res,next)=>{try{successResponse(res,200,'Partners',{items:await partnerModel.list()});}catch(error){next(error);}});
 router.get('/partners/:id/summary',async(req,res,next)=>{try{
@@ -114,10 +114,10 @@ router.get('/users/:id/transactions',async(req,res,next)=>{
   let items,total;
   if(env.useMongoDB){const [rows,count]=await Promise.all([wallet.WalletTransaction.find({userId:user.id}).sort({createdAt:-1,_id:-1}).skip((page-1)*limit).limit(limit).lean(),wallet.WalletTransaction.countDocuments({userId:user.id})]);items=rows.map(wallet.toTransaction);total=count;}
   else {const rows=await wallet.getTransactionsByUserId(user.id);total=rows.length;items=rows.slice((page-1)*limit,page*limit);}
-  successResponse(res,200,'User coin ledger',{items,total,page,limit,totalPages:Math.ceil(total/limit)});
+  successResponse(res,200,'User points ledger',{items,total,page,limit,totalPages:Math.ceil(total/limit)});
  }catch(error){next(error);}
 });
-router.get('/users/:id/daily',async(req,res,next)=>{try{const user=await findUser(req.params.id);successResponse(res,200,'Daily coins',await require('../services/daily-settlement.service').progress(user.id,req.query.day));}catch(error){next(error);}});
+router.get('/users/:id/daily',async(req,res,next)=>{try{const user=await findUser(req.params.id);successResponse(res,200,'Daily points',await require('../services/daily-settlement.service').progress(user.id,req.query.day));}catch(error){next(error);}});
 router.post('/users/:id/activities',adminWriteLimiter,async(req,res,next)=>{
  try {
   const user=await findUser(req.params.id);
@@ -134,7 +134,7 @@ router.post('/users/:id/activities',adminWriteLimiter,async(req,res,next)=>{
    metadata:{adminEntered:true,enteredBy:req.user.id,note:note.trim()}};
   if(require('../services/daily-rules').dayKey(payload.recordedAt)!==day)throw new AppError('Start time must match the selected IST day',400);
   const result=await require('../services/health.service').createRecord(user.id,payload,req.requestId);
-  successResponse(res,result.duplicate?200:201,'Activity recorded; coins follow daily settlement',result);
+  successResponse(res,result.duplicate?200:201,'Activity recorded; points follow daily settlement',result);
  }catch(error){next(error);}
 });
 router.get('/settlements/status',async(req,res,next)=>{
@@ -156,7 +156,7 @@ router.post('/settlements/run',adminWriteLimiter,async(req,res,next)=>{
     }
     totals.hasMore=totals.claimed===100;
     await audit.createAuditLog({userId:req.user.id,action:'ADMIN_DAILY_SETTLEMENT_RUN',metadata:totals,requestId:req.requestId});
-    successResponse(res,200,totals.claimed?'Pending coin settlements processed':'No matured coin settlements are waiting',totals);
+    successResponse(res,200,totals.claimed?'Pending point settlements processed':'No matured point settlements are waiting',totals);
   }catch(error){next(error);}
 });
 router.patch('/users/:id/status',authLimiter,async(req,res,next)=>{
