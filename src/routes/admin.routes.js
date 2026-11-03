@@ -13,8 +13,12 @@ const { authLimiter, adminWriteLimiter } = require('../middleware/rate-limit.mid
 router.use(authenticate);
 router.use((req,res,next)=>env.adminEmails.includes(req.user.email.toLowerCase()) ? next() : next(new AppError('Admin access required',403)));
 const coinRules=require('../services/coin-rules.service');
+const rewardRules=require('../services/reward-rule.service');
 router.get('/coin-rules',async(req,res,next)=>{try{const {page,limit}=query.buildQuery('users',req.query);successResponse(res,200,'Point rule versions',await coinRules.list(page,limit));}catch(error){next(error);}});
 router.post('/coin-rules',adminWriteLimiter,async(req,res,next)=>{try{successResponse(res,201,'New point rule version scheduled',await coinRules.create(req.body,req.user.id));}catch(error){next(error);}});
+router.get('/reward-rules',async(req,res,next)=>{try{successResponse(res,200,'Reward rules',await rewardRules.list());}catch(error){next(error);}});
+router.post('/reward-rules',adminWriteLimiter,async(req,res,next)=>{try{const rule=await rewardRules.create(req.body,req.user.id);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_RULE_CREATED',metadata:{ruleId:rule.id,title:rule.title,audience:rule.audience,metric:rule.metric},requestId:req.requestId});successResponse(res,201,'Reward rule created',rule);}catch(error){next(error);}});
+router.patch('/reward-rules/:id',adminWriteLimiter,async(req,res,next)=>{try{const rule=await rewardRules.update(req.params.id,req.body,req.user.id);if(!rule)throw new AppError('Reward rule not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_RULE_UPDATED',metadata:{ruleId:rule.id,changes:Object.keys(req.body||{})},requestId:req.requestId});successResponse(res,200,'Reward rule updated',rule);}catch(error){next(error);}});
 router.get('/overview',async(req,res,next)=>{try{successResponse(res,200,'Admin overview',await query.overview());}catch(error){next(error);}});
 router.get('/partners',async(req,res,next)=>{try{successResponse(res,200,'Partners',{items:await partnerModel.list()});}catch(error){next(error);}});
 router.get('/partners/:id/summary',async(req,res,next)=>{try{
