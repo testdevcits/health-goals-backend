@@ -6,6 +6,7 @@ const userModel = require('../models/user.model');
 const community = require('../models/community.model');
 
 const schema = new mongoose.Schema({
+  duplicateKey: { type: String },
   title: { type: String, required: true, trim: true, maxlength: 100 },
   ruleType: { type: String, enum: ['BADGE', 'LEADERBOARD', 'CHALLENGE'], default: 'BADGE' },
   audience: { type: String, enum: ['INDIVIDUAL', 'GROUP'], required: true },
@@ -22,6 +23,7 @@ const schema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
 }, { timestamps: true });
+schema.index({ duplicateKey: 1 }, { unique: true, sparse: true });
 schema.index({ status: 1, audience: 1, createdAt: -1 });
 const RewardRule = mongoose.model('AdminRewardRule', schema);
 const memoryRules = [];
@@ -103,25 +105,51 @@ async function validateAudience(data) {
   }
   return data;
 }
+// Names and status do not change the goal: prevent the same configuration twice.
+function duplicateKey(data) {
+  return crypto.createHash('sha256').update(JSON.stringify([
+    data.ruleType || 'BADGE', data.audience, data.targetUserId || null,
+    data.targetGroupId || null, data.metric, Number(data.targetValue),
+    data.period || 'MONTHLY', data.period === 'DURATION' ? Number(data.durationDays) : null,
+    data.ruleType === 'LEADERBOARD' ? Number(data.winnersCount || 1) : 1,
+    (data.badgeTitle || '').trim().toLowerCase(), Number(data.bonusPoints || 0)
+  ])).digest('hex');
+}
+async function ensureUnique(data, excludeId) {
+  const key = duplicateKey(data);
+  const rows = env.useMongoDB ? await RewardRule.find(excludeId ? { _id: { $ne: excludeId } } : {}).lean() : memoryRules.filter(row => row.id !== excludeId);
+  if (rows.some(row => duplicateKey(row) === key)) throw new AppError('This reward rule already exists. Edit the existing rule instead.', 409);
+  return key;
+}
+function duplicateError(error) {
+  if (error.code === 11000) throw new AppError('This reward rule already exists. Edit the existing rule instead.', 409);
+  throw error;
+}
 async function create(input, adminId, now = new Date()) {
   const data = await validateAudience(validate(input));
-  const row = { ...data, createdBy: adminId, updatedBy: adminId };
-  if (env.useMongoDB) return dto(await RewardRule.create(row));
+  const key = await ensureUnique(data);
+  const row = { ...data, duplicateKey: key, createdBy: adminId, updatedBy: adminId };
+  if (env.useMongoDB) { try { return dto(await RewardRule.create(row)); } catch (error) { duplicateError(error); } }
+  if (memoryRules.some(item => duplicateKey(item) === key)) throw new AppError('This reward rule already exists. Edit the existing rule instead.', 409);
   const saved = { ...row, id: crypto.randomUUID(), created_at: now.toISOString(), updated_at: now.toISOString() };
   memoryRules.unshift(saved);
   return dto(saved);
 }
 async function update(id, input, adminId, now = new Date()) {
   const data = validate(input, true);
+  const existing=env.useMongoDB?(mongoose.isValidObjectId(id)?await RewardRule.findById(id).lean():null):memoryRules.find(item=>item.id===id);
+  if(!existing)return null;
   if(data.audience!==undefined||data.targetUserId!==undefined||data.targetGroupId!==undefined){
     const current=env.useMongoDB?(mongoose.isValidObjectId(id)?await RewardRule.findById(id).lean():null):memoryRules.find(item=>item.id===id);
     if(!current)return null;
     const resolved=await validateAudience({...current,...data,audience:data.audience||current.audience});
     Object.assign(data,{targetUserId:resolved.targetUserId,targetGroupId:resolved.targetGroupId});
   }
+  data.duplicateKey = await ensureUnique({...existing,...data}, id);
   if (env.useMongoDB) {
     if (!mongoose.isValidObjectId(id)) return null;
-    const row = await RewardRule.findByIdAndUpdate(id, { $set: { ...data, updatedBy: adminId } }, { new: true, runValidators: true }).lean();
+    let row;
+    try { row = await RewardRule.findByIdAndUpdate(id, { $set: { ...data, updatedBy: adminId } }, { new: true, runValidators: true }).lean(); } catch (error) { duplicateError(error); }
     return row ? dto(row) : null;
   }
   const row = memoryRules.find(item => item.id === id);
@@ -129,4 +157,9 @@ async function update(id, input, adminId, now = new Date()) {
   Object.assign(row, data, { updatedBy: adminId, updated_at: now.toISOString() });
   return dto(row);
 }
-module.exports = { RewardRule, list, options, create, update };
+async function remove(id) {
+  if(env.useMongoDB){if(!mongoose.isValidObjectId(id))return null;const row=await RewardRule.findByIdAndDelete(id).lean();return row?dto(row):null;}
+  const index=memoryRules.findIndex(row=>row.id===id);if(index<0)return null;
+  return dto(memoryRules.splice(index,1)[0]);
+}
+module.exports = { RewardRule, list, options, create, update, remove };

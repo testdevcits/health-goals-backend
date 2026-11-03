@@ -8,7 +8,8 @@
     "start:socket": "node src/socket-server.js",
     "dev": "nodemon src/server.js",
     "test": "node --test test/*.test.js",
-    "db:seed:demo": "node scripts/seed-demo-user.js"
+    "db:seed:demo": "node scripts/seed-demo-user.js",
+    "db:seed:reward-rules": "node scripts/seed-reward-rules.js"
   },
   "keywords": [
     "health",
