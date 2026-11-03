@@ -6,6 +6,13 @@ const partnerSchema = new mongoose.Schema({
   email: { type: String, required: true, trim: true, lowercase: true, maxlength: 254 },
   contactName: { type: String, default: '', maxlength: 100 },
   category: { type: String, default: '', maxlength: 80 },
+  legalName: { type: String, default: '', maxlength: 160 },
+  businessType: { type: String, default: '', enum: ['', 'SOLE_PROPRIETOR', 'PARTNERSHIP', 'LLP', 'PRIVATE_LIMITED', 'PUBLIC_LIMITED', 'TRUST', 'OTHER'] },
+  businessAddress: { type: String, default: '', maxlength: 500 },
+  businessIdType: { type: String, default: '', enum: ['', 'GSTIN', 'UDYAM', 'CIN', 'LLPIN', 'SHOP_LICENSE', 'OTHER'] },
+  businessIdNumber: { type: String, default: '', trim: true, maxlength: 100 },
+  verificationStatus: { type: String, enum: ['NOT_PROVIDED', 'PENDING', 'VERIFIED', 'REJECTED'], default: 'NOT_PROVIDED' },
+  verificationNotes: { type: String, default: '', maxlength: 1000 },
   notes: { type: String, default: '', maxlength: 2000 },
   status: { type: String, enum: ['PENDING', 'ACTIVE', 'INACTIVE'], default: 'PENDING', index: true },
   portalUsername: { type: String, lowercase: true, trim: true, sparse: true, unique: true },
@@ -18,7 +25,7 @@ partnerSchema.index({ email: 1 }, { unique: true });
 const Partner = mongoose.models.Partner || mongoose.model('Partner', partnerSchema);
 const CouponSubmission = mongoose.models.PartnerCoupon || mongoose.model('PartnerCoupon', new mongoose.Schema({ partnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Partner', required: true, index: true }, environment: { type: String, enum: ['test', 'live'], default: 'live' }, title: { type: String, required: true, maxlength: 100 }, description: { type: String, default: '', maxlength: 1000 }, terms: { type: String, default: '', maxlength: 3000 }, encryptedCode: { type: String, required: true }, codeHash: { type: String, required: true }, expiresAt: { type: Date, default: null }, status: { type: String, enum: ['PENDING', 'APPROVED', 'REJECTED'], default: 'PENDING', index: true }, reviewedAt: Date, reviewedBy: String }, { timestamps: true }));
 const memory = [], submissions = [];
-const dto = row => ({ id: String(row._id || row.id), name: row.name, email: row.email, contactName: row.contactName || '', category: row.category || '', notes: row.notes || '', status: row.status, portalUsername: row.portalUsername || null, portalEnabled: Boolean(row.portalPasswordHash || row.portal_password_hash), keys: (row.keys || []).map(k => ({ keyId: k.keyId, environment: k.environment, prefix: k.prefix, createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, revokedAt: k.revokedAt || null })), createdAt: row.createdAt || row.created_at, updatedAt: row.updatedAt || row.updated_at });
+const dto = row => ({ id: String(row._id || row.id), name: row.name, email: row.email, contactName: row.contactName || '', category: row.category || '', legalName: row.legalName || '', businessType: row.businessType || '', businessAddress: row.businessAddress || '', businessIdType: row.businessIdType || '', businessIdNumber: row.businessIdNumber || '', verificationStatus: row.verificationStatus || 'NOT_PROVIDED', verificationNotes: row.verificationNotes || '', notes: row.notes || '', status: row.status, portalUsername: row.portalUsername || null, portalEnabled: Boolean(row.portalPasswordHash || row.portal_password_hash), keys: (row.keys || []).map(k => ({ keyId: k.keyId, environment: k.environment, prefix: k.prefix, createdAt: k.createdAt, lastUsedAt: k.lastUsedAt, revokedAt: k.revokedAt || null })), createdAt: row.createdAt || row.created_at, updatedAt: row.updatedAt || row.updated_at });
 const couponDto = row => ({ id: String(row._id || row.id), partnerId: String(row.partnerId || row.partner_id), environment: row.environment || 'live', title: row.title, description: row.description || '', terms: row.terms || '', code: row.encryptedCode ? require('../services/voucher-code.service').decrypt(row.encryptedCode) : row.code, expiresAt: row.expiresAt || row.expires_at || null, status: row.status, createdAt: row.createdAt || row.created_at });
 async function create(input) {
   if (env.useMongoDB) return dto(await Partner.create({ ...input, status: 'PENDING', keys: [] }));

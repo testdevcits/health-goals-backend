@@ -52,14 +52,14 @@ async function retry(job,error,now=new Date()) {
 }
 async function processBatch({now=new Date(),batchSize=20,concurrency=2}={}) {
  batchSize=Math.min(20,Math.max(1,batchSize));concurrency=Math.min(2,Math.max(1,concurrency));
- let claimed=0,settled=0,failed=0;
+ let claimed=0,settled=0,failed=0,coinsCredited=0;
  // At most 20 jobs (therefore at most 20 users), only 2 running concurrently.
  for(let offset=0;offset<batchSize;offset+=concurrency){
   const jobs=[];for(let i=0;i<Math.min(concurrency,batchSize-offset);i++){const job=await claim(now);if(job)jobs.push(job);}
   if(!jobs.length)break;claimed+=jobs.length;
-  await Promise.all(jobs.map(async job=>{try{await settle(job,now);settled++;}catch(error){failed++;await retry(job,error,now);}}));
+  await Promise.all(jobs.map(async job=>{try{const result=await settle(job,now);if(result){settled++;coinsCredited+=result.credited||0;}}catch(error){failed++;await retry(job,error,now);}}));
  }
- return {claimed,settled,failed};
+ return {claimed,settled,failed,coinsCredited};
 }
 function publicDay(row,records){const totals=records?calculate(records,row.rules):row.totals;return {day:row.day,timezone:row.rules.timezone,ruleVersion:row.rules.version,rules:row.rules,state:row.state,dueAt:row.dueAt,creditedCoins:row.creditedCoins,entitledCoins:totals?.entitledCoins??row.entitledCoins??0,pendingCoins:Math.max(0,(totals?.entitledCoins??row.entitledCoins??0)-row.creditedCoins),totals,lastSettledAt:row.lastSettledAt,needsSettlement:row.revision>row.settledRevision};}
 async function progress(userId,day=dayKey(new Date())){
