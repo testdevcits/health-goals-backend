@@ -17,3 +17,13 @@ test('analytics includes zero activity and excludes deleted and out-of-period ac
  const result=await analytics(rule.id,new Date('2026-11-03T08:00:00Z'));
  const row=result.participants.find(row=>row.id===user.id);assert.equal(row.value,1500);assert.equal(row.progress,150);assert.equal(result.achieved,1);
 });
+test('group chart compares matching group goals and excludes different targets',async()=>{
+ const community=require('../src/models/community.model');
+ for(const id of ['chart-g1','chart-g2','chart-g3'])community.memoryGroups.push({id,name:id,maxMembers:50,members:[]});
+ const base={title:'Chart group one',ruleType:'LEADERBOARD',audience:'GROUP',metric:'STEPS',targetValue:100000,period:'MONTHLY'};
+ const first=await rules.create({...base,targetGroupId:'chart-g1'},'admin');
+ await rules.create({...base,title:'Chart group two',targetGroupId:'chart-g2'},'admin');
+ await rules.create({...base,title:'Different goal',targetGroupId:'chart-g3',targetValue:200000},'admin');
+ const result=await analytics(first.id,new Date('2026-11-03T08:00:00Z'));
+ assert.equal(result.total,2);assert.deepEqual(result.participants.map(row=>row.id),['chart-g1','chart-g2']);assert.ok(result.participants.every(row=>row.rank===1));
+});

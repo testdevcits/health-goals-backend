@@ -18,7 +18,11 @@ async function analytics(id,now=new Date()){
  const totals=new Map();for(const {userId,records:rows} of days.values()){const value=calculate(rows);const amount=rule.metric==='STEPS'?value.steps:rule.metric==='WORKOUT_HOURS'?value.workoutMinutes/60:value.meditationMinutes/60;totals.set(userId,(totals.get(userId)||0)+amount);}
  const active=targets.users.filter(user=>user.status==='ACTIVE');
  let participants=active.filter(user=>!rule.targetUserId||user.id===rule.targetUserId).map(user=>({id:user.id,name:user.name,value:totals.get(user.id)||0}));
- if(rule.audience==='GROUP'){const group=targets.groups.find(group=>group.id===rule.targetGroupId);participants=group?[{id:group.id,name:group.name,value:group.members.filter(member=>member.status==='ACTIVE').reduce((sum,member)=>sum+(totals.get(member.id)||0),0)}]:[];}
+ if(rule.audience==='GROUP'){
+  const definitions=(await rules.list()).items;
+  const groupIds=new Set(definitions.filter(other=>{const dates=period(other,now);return other.audience==='GROUP'&&other.ruleType===rule.ruleType&&other.metric===rule.metric&&other.targetValue===rule.targetValue&&dates.start===window.start&&dates.end===window.end;}).map(other=>other.targetGroupId));
+  participants=targets.groups.filter(group=>groupIds.has(group.id)).map(group=>({id:group.id,name:group.name,value:group.members.filter(member=>member.status==='ACTIVE').reduce((sum,member)=>sum+(totals.get(member.id)||0),0)}));
+ }
  participants.sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name));let rank=0,previous;
  participants=participants.map((row,index)=>{if(row.value!==previous)rank=index+1;previous=row.value;return {...row,rank,progress:row.value/rule.targetValue*100,achieved:row.value>=rule.targetValue};});
  return {rule,period:window,timezone:'Asia/Kolkata',generatedAt:now.toISOString(),total:participants.length,achieved:participants.filter(row=>row.achieved).length,started:participants.filter(row=>row.value>0).length,participants:participants.slice(0,20)};
