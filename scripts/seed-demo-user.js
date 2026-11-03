@@ -11,7 +11,25 @@ const daily=require('../src/services/daily-settlement.service');
 const {DailyActivity}=require('../src/models/daily-activity.model');
 const {dayKey}=require('../src/services/daily-rules');
 const wallet=require('../src/models/wallet.model');
+const community=require('../src/models/community.model');
+const rewardRules=require('../src/services/reward-rule.service');
+const engine=require('../src/services/reward-engine.service');
 const EMAIL='demo.health.user@example.test';
+async function seedDemoRules(userId,groupId,today){
+ const startDate=new Date(new Date(`${today}T00:00:00Z`).getTime()-7*86400000).toISOString().slice(0,10);
+ const definitions=[
+  {key:'badge',title:'Demo · Monthly steps badge',ruleType:'BADGE',audience:'INDIVIDUAL',targetUserId:userId,targetValue:10000,period:'MONTHLY',badgeTitle:'Demo Step Achiever',bonusPoints:5},
+  {key:'leaderboard',title:'Demo · Monthly steps leaderboard',ruleType:'LEADERBOARD',audience:'INDIVIDUAL',targetUserId:userId,targetValue:10000,period:'MONTHLY',winnersCount:1,badgeTitle:'Demo Monthly Champion',bonusPoints:0},
+  {key:'challenge',title:'Demo · 7-day steps challenge',ruleType:'CHALLENGE',audience:'INDIVIDUAL',targetUserId:userId,targetValue:30000,period:'DURATION',durationDays:7,startDate,badgeTitle:'Demo Challenge Finisher',bonusPoints:5},
+  {key:'group',title:'Demo · Group steps badge',ruleType:'BADGE',audience:'GROUP',targetGroupId:groupId,targetValue:10000,period:'MONTHLY',badgeTitle:'Demo Team Achiever',bonusPoints:0}
+ ];
+ for(const {key,...definition} of definitions){
+  const seedKey=`demo-activity-${userId}-${key}`,existing=await rewardRules.RewardRule.findOne({seedKey}).lean();
+  const body={metric:'STEPS',status:'ACTIVE',targetUserId:null,targetGroupId:null,winnersCount:1,durationDays:null,startDate:null,...definition};
+  const saved=existing?await rewardRules.update(String(existing._id),body,userId):await rewardRules.create(body,userId);
+  await rewardRules.RewardRule.updateOne({_id:saved.id},{$set:{seedKey}});
+ }
+}
 async function main(){
  if(!env.useMongoDB||env.appMode!=='dev'||env.nodeEnv==='production')throw new Error('Demo seeding requires persistent MongoDB and APP_MODE=dev outside production.');
  if(env.adminEmails.includes(EMAIL))throw new Error('Demo email must not be an admin.');
@@ -21,6 +39,8 @@ async function main(){
  const userId=user.id;
  const device=await devices.createDevice(userId,{deviceType:'phone',deviceIdentifier:'demo-health-android-phone-v1',manufacturer:'Demo device',model:'Demo Android Phone',platform:'android'});
  const today=dayKey(new Date());let processed=0,credited=0;
+ let group=await community.Group.findOne({createdBy:userId,name:'Demo Activity Team'}).lean();
+ if(!group){const created=await community.createGroup(userId,{name:'Demo Activity Team',description:'Synthetic activity preview group',private:true,maxMembers:10});group={_id:created.id};}
  for(let i=7;i>=1;i--){
   const day=new Date(new Date(`${today}T00:00:00Z`).getTime()-i*86400000).toISOString().slice(0,10);
   const at=(hour,minute=0)=>new Date(`${day}T${String(hour).padStart(2,'0')}:${String(minute).padStart(2,'0')}:00+05:30`).toISOString();
@@ -46,8 +66,13 @@ async function main(){
  }
  // A pending activity today demonstrates the midnight settlement boundary.
  await health.createRecord(userId,{metricType:'water_checkin',value:1,unit:'checkin',recordedAt:new Date().toISOString(),source:'app',sourceRecordId:`demo-v1:${today}:water_checkin`,deviceId:device.id,metadata:{demo:true,synthetic:true}});
+ await seedDemoRules(userId,String(group._id),today);
+ await engine.evaluate();
+ const competitionData=await engine.forUser(userId);
  const recordCount=await mongoose.model('HealthRecord').countDocuments({userId});
  const balance=await wallet.findWallet(userId);
- console.log(JSON.stringify({name:user.name,email:EMAIL,records:recordCount,devices:1,historicalDays:7,creditedThisRun:credited,availableCoins:balance.availablePoints,todayPending:(await daily.progress(userId)).pendingCoins},null,2));
+ console.log(JSON.stringify({name:user.name,email:EMAIL,records:recordCount,devices:1,historicalDays:7,groupId:String(group._id),competitions:competitionData.competitions.length,achievements:competitionData.achievements.length,creditedThisRun:credited,availableCoins:balance.availablePoints,todayPending:(await daily.progress(userId)).pendingCoins},null,2));
 }
-main().catch(error=>{console.error(error.message);process.exitCode=1;}).finally(()=>disconnectDatabase());
+if(require.main===module)main().catch(error=>{console.error(error.message);process.exitCode=1;}).finally(()=>disconnectDatabase());
+
+module.exports={seedDemoRules};
