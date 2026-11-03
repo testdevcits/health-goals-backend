@@ -69,7 +69,7 @@ router.post('/rewards/:id/vouchers',adminWriteLimiter,async(req,res,next)=>{try{
   await audit.createAuditLog({userId:req.user.id,action:'ADMIN_VOUCHERS_IMPORTED',metadata:{rewardId:req.params.id,count:imported},requestId:req.requestId});
   successResponse(res,201,'Voucher codes imported',{imported,availableVoucherCount:await rewardModel.countAvailableVoucherCodes(req.params.id)});
 }catch(error){if(error.code===11000)error=new AppError('One or more voucher codes already exist in inventory',409);next(error);}});
-router.get('/rewards/:id/vouchers',async(req,res,next)=>{try{const reward=await rewardModel.findRewardById(req.params.id);if(!reward)throw new AppError('Reward not found',404);successResponse(res,200,'Voucher inventory count',{availableVoucherCount:await rewardModel.countAvailableVoucherCodes(req.params.id)});}catch(error){next(error);}});
+router.get('/rewards/:id/vouchers',async(req,res,next)=>{try{const reward=await rewardModel.findRewardById(req.params.id);if(!reward)throw new AppError('Reward not found',404);const page=Number(req.query.page||1),limit=Number(req.query.limit||50);if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>100)throw new AppError('Invalid voucher pagination parameters',400);const inventory=await rewardModel.listVoucherCodes(req.params.id,{page,limit});successResponse(res,200,'Voucher inventory',{...inventory,page,limit,totalPages:Math.ceil(inventory.total/limit)});}catch(error){next(error);}});
 router.get('/redemptions',async(req,res,next)=>{try{
   const page=Number(req.query.page||1),limit=Number(req.query.limit||20);
   if(!Number.isInteger(page)||page<1||!Number.isInteger(limit)||limit<1||limit>100)throw new AppError('Invalid pagination parameters',400);

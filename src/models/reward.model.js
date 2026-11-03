@@ -205,7 +205,7 @@ const importVoucherCodes = async (rewardId, rows, session = null) => {
     if (!reward) return 0;
     const known = new Set(memoryVoucherCodes.map(row => row.codeHash));
     const fresh = rows.filter(row => { if (known.has(row.codeHash)) return false; known.add(row.codeHash); return true; });
-    memoryVoucherCodes.push(...fresh.map(row => ({ ...row, rewardId, status: 'AVAILABLE', id: crypto.randomUUID() })));
+    memoryVoucherCodes.push(...fresh.map(row => ({ ...row, rewardId, status: 'AVAILABLE', id: crypto.randomUUID(), createdAt: new Date().toISOString() })));
     reward.stock += fresh.length;
     reward.updated_at = new Date().toISOString();
     return fresh.length;
@@ -217,6 +217,31 @@ const importVoucherCodes = async (rewardId, rows, session = null) => {
 const countAvailableVoucherCodes = rewardId => env.useMongoDB
   ? VoucherCode.countDocuments({ rewardId, status: 'AVAILABLE' })
   : memoryVoucherCodes.filter(row => row.rewardId === rewardId && row.status === 'AVAILABLE').length;
+const listVoucherCodes = async (rewardId, { page = 1, limit = 50 } = {}) => {
+  const offset = (page - 1) * limit;
+  if (!env.useMongoDB) {
+    const all = memoryVoucherCodes.filter(row => row.rewardId === rewardId).sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    const items = all.slice(offset, offset + limit).map(row => {
+      const redemption = row.redemptionId ? redemptions.find(item => String(item.id || item._id) === String(row.redemptionId)) : null;
+      let status = row.status === 'AVAILABLE' ? 'AVAILABLE' : redemption?.status || 'ISSUED';
+      if (status === 'ISSUED' && row.expiresAt && new Date(row.expiresAt) <= new Date()) status = 'EXPIRED';
+      return { id: String(row.id || row._id), code: require('../services/voucher-code.service').decrypt(row.encryptedCode), status, expiresAt: row.expiresAt || null, createdAt: row.createdAt || null, redeemedAt: redemption?.redeemedAt || redemption?.redeemed_at || null };
+    });
+    return { items, total: all.length, availableVoucherCount: all.filter(row => row.status === 'AVAILABLE').length };
+  }
+  const filter = { rewardId };
+  const [rows, total, availableVoucherCount] = await Promise.all([
+    VoucherCode.find(filter).sort({ createdAt: -1, _id: -1 }).skip(offset).limit(limit).populate('redemptionId', 'status redeemedAt createdAt').lean(),
+    VoucherCode.countDocuments(filter),
+    countAvailableVoucherCodes(rewardId)
+  ]);
+  const items = rows.map(row => {
+    let status = row.status === 'AVAILABLE' ? 'AVAILABLE' : row.redemptionId?.status || 'ISSUED';
+    if (status === 'ISSUED' && row.expiresAt && new Date(row.expiresAt) <= new Date()) status = 'EXPIRED';
+    return { id: String(row._id), code: require('../services/voucher-code.service').decrypt(row.encryptedCode), status, expiresAt: row.expiresAt || null, createdAt: row.createdAt || null, redeemedAt: row.redemptionId?.redeemedAt || null };
+  });
+  return { items, total, availableVoucherCount };
+};
 const assignVoucherCode = async (rewardId, userId, redemptionId, session) => {
   if (!env.useMongoDB) {
     const row = memoryVoucherCodes.find(item => item.rewardId === rewardId && item.status === 'AVAILABLE');
@@ -317,6 +342,7 @@ module.exports = {
   createRedemption,
   importVoucherCodes,
   countAvailableVoucherCodes,
+  listVoucherCodes,
   assignVoucherCode,
   getRedemptionsByUserId,
   getRedemptionById,
