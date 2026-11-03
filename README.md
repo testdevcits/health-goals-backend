@@ -316,3 +316,21 @@ Each account receives a permanent unique `publicId`, such as `USR-A1B2C3D4E5F6`.
 - `POST /api/v1/admin/users/:id/activities`: add an audited manual activity with `{entryId, metricType, value, day, note, startTime?, endTime?, activityType?}`. Reuse the same unique `entryId` when retrying a submission. Supported types: steps, workout, meditation, water_checkin, sleep_checkin. Send interval times with explicit timezone offsets; the selected day is IST. Workouts need a supported activity type. Entries use the existing ingestion/settlement pipeline, not a direct wallet credit. Manual steps do not earn coins; workout/meditation use actual interval duration; walking/running workouts do not earn extra workout rewards. Future intervals and invalid dates are rejected.
 
 In the admin UI, open **Coin rules** to create a version. Open **Users → user → Daily coins** for day-wise earnings, pending amounts, the transaction ledger, and **Add activity record**. `npm run db:seed:demo` idempotently adds seven historical days and today's pending check-in to the dedicated `demo.health.user@example.test` account, settling only that account's eligible historical days through the normal coin calculation and wallet transaction flow. It requires development mode and persistent MongoDB with transactions.
+
+## Partner portal and coupon validation
+
+An admin approves a partner, opens **View partner & keys**, enters a partner login ID, and creates portal credentials. The backend generates a temporary password shown once in the admin screen. Share the login ID and temporary password with the partner through a secure channel. On first sign-in at `${PARTNER_PORTAL_URL}/partner-portal`, the partner must set a new password.
+
+The partner portal is for partners without their own application. It shows generated, used, active, and expired coupon counts; recent coupon activity; and a coupon-code form to verify and mark a customer's coupon as used. Data is scoped to rewards assigned to that partner. A conditional database update prevents a coupon from being used twice. The admin **Redemptions** page records the partner and use time.
+
+Partners with their own website or app can call the same backend flow from their server using an `X-Partner-Key` header. Never expose a live key in browser or mobile application code:
+
+- `GET /api/v1/partner/redemptions` lists that partner's coupon activity and totals.
+- `POST /api/v1/partner/redemptions/verify` with `{ "code": "CUSTOMER_COUPON_CODE" }` checks a code.
+- `POST /api/v1/partner/redemptions/mark-used` with the same body records its use.
+
+The portal endpoints are `POST /api/v1/partner/portal/login`, `GET /api/v1/partner/portal/me`, `POST /api/v1/partner/portal/change-password`, `GET /api/v1/partner/portal/coupons`, `POST /api/v1/partner/portal/verify`, and `POST /api/v1/partner/portal/mark-used`.
+
+Set `PARTNER_PORTAL_URL` to the deployed admin frontend origin in the backend environment (for example, `https://your-admin-domain.example`). The portal page is `${PARTNER_PORTAL_URL}/partner-portal`. Partner credentials are provisioned in the admin UI and shared by the admin. For local development, set `PARTNER_PORTAL_URL=http://localhost:5173` for the default Vite frontend.
+
+Staff accounts and redemptions require persistent MongoDB for production. Keep `VOUCHER_ENCRYPTION_KEY` stable because redemption codes are encrypted at rest; the same key must be configured on every backend deployment that reads those codes.

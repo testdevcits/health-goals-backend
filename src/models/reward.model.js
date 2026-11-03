@@ -28,6 +28,7 @@ const redemptionSchema = new mongoose.Schema(
     expiresAt: { type: Date, required: true },
     redeemedAt: { type: Date, default: null },
     redeemedByPartnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Partner', default: null },
+    redeemedByPartnerUsername: { type: String, default: null },
     redeemedByStaffId: { type: String, default: null },
     redeemedByStaffEmail: { type: String, default: null }
   },
@@ -92,7 +93,9 @@ const toRedemption = (redemption) => ({
   redemptionCode: (() => { const value = redemption.redemptionCode || redemption.redemption_code; return value?.startsWith('enc1:') ? require('../services/voucher-code.service').decrypt(value.slice(5)) : value; })(),
   expiresAt: redemption.expiresAt || redemption.expires_at,
   redeemedAt: redemption.redeemedAt || redemption.redeemed_at,
-  redeemedByPartnerId: redemption.redeemedByPartnerId || redemption.redeemed_by_partner_id || null,
+  redeemedByPartnerId: (() => { const partner = redemption.redeemedByPartnerId || redemption.redeemed_by_partner_id || null; return partner ? String(partner._id || partner) : null; })(),
+  redeemedByPartnerName: (() => { const partner = redemption.redeemedByPartnerId || redemption.redeemed_by_partner_id; return partner?.name || null; })(),
+  redeemedByPartnerUsername: redemption.redeemedByPartnerUsername || redemption.redeemed_by_partner_username || null,
   redeemedByStaffId: redemption.redeemedByStaffId || redemption.redeemed_by_staff_id || null,
   redeemedByStaffEmail: redemption.redeemedByStaffEmail || redemption.redeemed_by_staff_email || null,
   createdAt: redemption.createdAt || redemption.created_at
@@ -103,7 +106,7 @@ const listAllRewards = async () => env.useMongoDB
   : (seedRewards(), rewards.map(toReward));
 const listAllRedemptions = async () => env.useMongoDB
   ? (await Redemption.find().sort({ createdAt: -1, _id: -1 })).map(toRedemption)
-  : redemptions.map(row => ({ ...toRedemption(row), rewardTitle: rewards.find(reward => reward.id === row.reward_id)?.title || 'Reward' }));
+  : Promise.all(redemptions.map(async row => { const partnerId = row.redeemedByPartnerId || row.redeemed_by_partner_id; const partner = partnerId ? await require('./partner.model').find(String(partnerId)) : null; return { ...toRedemption(row), rewardTitle: rewards.find(reward => reward.id === row.reward_id)?.title || 'Reward', redeemedByPartnerName: partner?.name || null }; }));
 
 const createReward = async payload => env.useMongoDB
   ? toReward(await Reward.create(payload))
@@ -267,16 +270,39 @@ const getRedemptionForPartnerCode = async (codeHash, partnerId) => {
   return { redemption: toRedemption({ ...raw, rewardId: raw.rewardId._id }), rewardTitle: raw.rewardId.title, partnerId: String(raw.rewardId.partnerId), userName: user?.name || '' };
 };
 
-const markRedemptionUsed = async (id, { partnerId, staffId, staffEmail }) => {
+const getPartnerRedemptions = async partnerId => {
+  if (!env.useMongoDB) {
+    const rewardRows = rewards.filter(row => String(row.partnerId || '') === String(partnerId));
+    const rewardById = new Map(rewardRows.map(row => [row.id, row]));
+    const rows = redemptions.filter(row => rewardById.has(row.reward_id)).sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    const items = rows.slice(0, 100).map(row => ({ ...toRedemption(row), rewardTitle: rewardById.get(row.reward_id)?.title || 'Reward' }));
+    return { total: rows.length, used: rows.filter(row => row.status === 'REDEEMED').length, expired: rows.filter(row => row.status === 'ISSUED' && new Date(row.expires_at) <= new Date()).length, active: rows.filter(row => row.status === 'ISSUED' && new Date(row.expires_at) > new Date()).length, items };
+  }
+  const ownedRewards = await Reward.find({ partnerId }).select('_id title').lean();
+  const ids = ownedRewards.map(row => row._id);
+  if (!ids.length) return { total: 0, used: 0, items: [] };
+  const filter = { rewardId: { $in: ids } };
+  const now = new Date();
+  const [total, used, expired, active, rows] = await Promise.all([
+    Redemption.countDocuments(filter),
+    Redemption.countDocuments({ ...filter, status: 'REDEEMED' }),
+    Redemption.countDocuments({ ...filter, status: 'ISSUED', expiresAt: { $lte: now } }),
+    Redemption.countDocuments({ ...filter, status: 'ISSUED', expiresAt: { $gt: now } }),
+    Redemption.find(filter).sort({ createdAt: -1, _id: -1 }).limit(100).populate('rewardId', 'title').lean()
+  ]);
+  return { total, used, expired, active, items: rows.map(row => ({ ...toRedemption({ ...row, rewardId: row.rewardId?._id || row.rewardId }), rewardTitle: row.rewardId?.title || 'Reward' })) };
+};
+
+const markRedemptionUsed = async (id, { partnerId, staffId = null, staffEmail = null, partnerUsername = null }) => {
   const usedAt = new Date();
   if (!env.useMongoDB) {
     const row = redemptions.find(item => item.id === id);
     if (!row || row.status !== 'ISSUED' || new Date(row.expires_at) <= usedAt) return null;
-    row.status = 'REDEEMED'; row.redeemed_at = usedAt.toISOString(); row.redeemedByPartnerId = partnerId; row.redeemedByStaffId = staffId; row.redeemedByStaffEmail = staffEmail;
+    row.status = 'REDEEMED'; row.redeemed_at = usedAt.toISOString(); row.redeemedByPartnerId = partnerId; row.redeemedByStaffId = staffId; row.redeemedByStaffEmail = staffEmail; row.redeemedByPartnerUsername = partnerUsername;
     const reward = rewards.find(item => item.id === row.reward_id);
     return { redemption: toRedemption(row), rewardTitle: reward?.title || 'Reward', partnerId: String(partnerId) };
   }
-  const row = await Redemption.findOneAndUpdate({ _id: id, status: 'ISSUED', expiresAt: { $gt: usedAt } }, { $set: { status: 'REDEEMED', redeemedAt: usedAt, redeemedByPartnerId: partnerId, redeemedByStaffId: staffId, redeemedByStaffEmail: staffEmail } }, { new: true }).populate('rewardId', 'title partnerId').lean();
+  const row = await Redemption.findOneAndUpdate({ _id: id, status: 'ISSUED', expiresAt: { $gt: usedAt } }, { $set: { status: 'REDEEMED', redeemedAt: usedAt, redeemedByPartnerId: partnerId, redeemedByPartnerUsername: partnerUsername, redeemedByStaffId: staffId, redeemedByStaffEmail: staffEmail } }, { new: true }).populate('rewardId', 'title partnerId').lean();
   if (!row) return null;
   return { redemption: toRedemption({ ...row, rewardId: row.rewardId?._id || row.rewardId }), rewardTitle: row.rewardId?.title || 'Reward', partnerId: String(row.rewardId?.partnerId || partnerId) };
 };
@@ -295,6 +321,7 @@ module.exports = {
   getRedemptionsByUserId,
   getRedemptionById,
   getRedemptionForPartnerCode,
+  getPartnerRedemptions,
   markRedemptionUsed,
   listAllRewards,
   listAllRedemptions,

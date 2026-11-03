@@ -4,6 +4,8 @@ const { AppError } = require('../middleware/error.middleware');
 const { successResponse } = require('../utils/response');
 const { adminWriteLimiter } = require('../middleware/rate-limit.middleware');
 
+router.use('/portal', require('./partner-portal.routes'));
+
 router.use(async (req, res, next) => {
   try {
     const raw = req.get('x-partner-key');
@@ -24,6 +26,40 @@ router.post('/coupons', adminWriteLimiter, async (req, res, next) => {
     let expiry = null; if (expiresAt) { expiry = new Date(expiresAt); if (!Number.isFinite(+expiry) || expiry <= new Date()) throw new AppError('Expiry must be a future date', 400); }
     const coupon = await partners.submitCoupon(req.partner.id, { environment: req.partner.environment, title: title.trim(), description, terms, code: code.trim(), expiresAt: expiry });
     successResponse(res, 201, 'Coupon submitted for admin review', { coupon });
+  } catch (error) { next(error); }
+});
+
+router.get('/redemptions', async (req, res, next) => {
+  try { successResponse(res, 200, 'Partner coupon activity', await require('../models/reward.model').getPartnerRedemptions(req.partner.id)); }
+  catch (error) { next(error); }
+});
+
+router.post('/redemptions/verify', adminWriteLimiter, async (req, res, next) => {
+  try {
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    if (!code || code.length > 160) throw new AppError('Enter a valid coupon code', 400);
+    const result = await require('../models/reward.model').getRedemptionForPartnerCode(require('../services/voucher-code.service').hash(code), req.partner.id);
+    if (!result) throw new AppError('This coupon could not be verified for your partner account', 404);
+    const state = result.redemption.status === 'REDEEMED' ? 'ALREADY_USED' : result.redemption.status !== 'ISSUED' ? 'NOT_VALID' : !result.redemption.expiresAt || new Date(result.redemption.expiresAt) <= new Date() ? 'EXPIRED' : 'VALID';
+    successResponse(res, 200, 'Coupon checked', { state, rewardTitle: result.rewardTitle, expiresAt: result.redemption.expiresAt, redeemedAt: result.redemption.redeemedAt });
+  } catch (error) { next(error); }
+});
+
+router.post('/redemptions/mark-used', adminWriteLimiter, async (req, res, next) => {
+  try {
+    const code = typeof req.body?.code === 'string' ? req.body.code.trim() : '';
+    if (!code || code.length > 160) throw new AppError('Enter a valid coupon code', 400);
+    const codeHash = require('../services/voucher-code.service').hash(code);
+    const model = require('../models/reward.model');
+    const result = await model.getRedemptionForPartnerCode(codeHash, req.partner.id);
+    if (!result) throw new AppError('This coupon could not be verified for your partner account', 404);
+    const redemption = result.redemption;
+    if (redemption.status === 'REDEEMED') return successResponse(res, 200, 'Coupon was already used', { state: 'ALREADY_USED', rewardTitle: result.rewardTitle, redeemedAt: redemption.redeemedAt });
+    if (redemption.status !== 'ISSUED' || !redemption.expiresAt || new Date(redemption.expiresAt) <= new Date()) return successResponse(res, 200, 'Coupon is not available to use', { state: redemption.status === 'ISSUED' ? 'EXPIRED' : 'NOT_VALID', rewardTitle: result.rewardTitle, expiresAt: redemption.expiresAt });
+    const updated = await model.markRedemptionUsed(redemption.id, { partnerId: req.partner.id });
+    if (!updated) return successResponse(res, 200, 'Coupon was already used or expired', { state: 'ALREADY_USED', rewardTitle: result.rewardTitle });
+    await require('../models/audit.model').createAuditLog({ action: 'PARTNER_API_REDEMPTION_MARKED_USED', metadata: { partnerId: req.partner.id, environment: req.partner.environment, redemptionId: updated.redemption.id }, requestId: req.requestId });
+    successResponse(res, 200, 'Coupon marked as used', { state: 'USED', rewardTitle: updated.rewardTitle, redeemedAt: updated.redemption.redeemedAt });
   } catch (error) { next(error); }
 });
 
