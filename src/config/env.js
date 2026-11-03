@@ -49,6 +49,7 @@ module.exports = {
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d'
   },
   corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+  partnerPortalUrl: process.env.PARTNER_PORTAL_URL || (process.env.ALLOWED_ORIGINS || process.env.CORS_ORIGIN || 'http://localhost:5173').split(',')[0].trim().replace(/\/$/, ''),
   allowedOrigins: (process.env.ALLOWED_ORIGINS || process.env.CORS_ORIGIN || 'http://localhost:3000')
     .split(',')
     .map((origin) => origin.trim())

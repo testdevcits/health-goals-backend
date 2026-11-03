@@ -26,7 +26,10 @@ const redemptionSchema = new mongoose.Schema(
     status: { type: String, enum: ['ISSUED', 'REDEEMED', 'CANCELLED'], default: 'ISSUED' },
     redemptionCode: { type: String, required: true },
     expiresAt: { type: Date, required: true },
-    redeemedAt: { type: Date, default: null }
+    redeemedAt: { type: Date, default: null },
+    redeemedByPartnerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Partner', default: null },
+    redeemedByStaffId: { type: String, default: null },
+    redeemedByStaffEmail: { type: String, default: null }
   },
   { timestamps: { createdAt: true, updatedAt: false } }
 );
@@ -89,6 +92,9 @@ const toRedemption = (redemption) => ({
   redemptionCode: (() => { const value = redemption.redemptionCode || redemption.redemption_code; return value?.startsWith('enc1:') ? require('../services/voucher-code.service').decrypt(value.slice(5)) : value; })(),
   expiresAt: redemption.expiresAt || redemption.expires_at,
   redeemedAt: redemption.redeemedAt || redemption.redeemed_at,
+  redeemedByPartnerId: redemption.redeemedByPartnerId || redemption.redeemed_by_partner_id || null,
+  redeemedByStaffId: redemption.redeemedByStaffId || redemption.redeemed_by_staff_id || null,
+  redeemedByStaffEmail: redemption.redeemedByStaffEmail || redemption.redeemed_by_staff_email || null,
   createdAt: redemption.createdAt || redemption.created_at
 });
 
@@ -242,6 +248,39 @@ const getRedemptionById = async (userId, id) => {
   return redemption ? toRedemption(redemption) : null;
 };
 
+const getRedemptionForPartnerCode = async (codeHash, partnerId) => {
+  if (!env.useMongoDB) {
+    const voucher = memoryVoucherCodes.find(row => row.codeHash === codeHash && row.status === 'ASSIGNED');
+    if (!voucher) return null;
+    const raw = redemptions.find(row => row.id === voucher.redemptionId);
+    if (!raw) return null;
+    const reward = rewards.find(row => row.id === raw.reward_id);
+    if (!reward?.partnerId || String(reward.partnerId) !== String(partnerId)) return null;
+    const redemption = toRedemption(raw);
+    return { redemption, rewardTitle: reward.title, partnerId: String(reward.partnerId) };
+  }
+  const voucher = await VoucherCode.findOne({ codeHash, status: 'ASSIGNED' }).lean();
+  if (!voucher?.redemptionId) return null;
+  const raw = await Redemption.findById(voucher.redemptionId).populate('rewardId', 'title partnerId').lean();
+  if (!raw?.rewardId?.partnerId || String(raw.rewardId.partnerId) !== String(partnerId)) return null;
+  const user = await mongoose.model('User').findById(raw.userId).select('name').lean();
+  return { redemption: toRedemption({ ...raw, rewardId: raw.rewardId._id }), rewardTitle: raw.rewardId.title, partnerId: String(raw.rewardId.partnerId), userName: user?.name || '' };
+};
+
+const markRedemptionUsed = async (id, { partnerId, staffId, staffEmail }) => {
+  const usedAt = new Date();
+  if (!env.useMongoDB) {
+    const row = redemptions.find(item => item.id === id);
+    if (!row || row.status !== 'ISSUED' || new Date(row.expires_at) <= usedAt) return null;
+    row.status = 'REDEEMED'; row.redeemed_at = usedAt.toISOString(); row.redeemedByPartnerId = partnerId; row.redeemedByStaffId = staffId; row.redeemedByStaffEmail = staffEmail;
+    const reward = rewards.find(item => item.id === row.reward_id);
+    return { redemption: toRedemption(row), rewardTitle: reward?.title || 'Reward', partnerId: String(partnerId) };
+  }
+  const row = await Redemption.findOneAndUpdate({ _id: id, status: 'ISSUED', expiresAt: { $gt: usedAt } }, { $set: { status: 'REDEEMED', redeemedAt: usedAt, redeemedByPartnerId: partnerId, redeemedByStaffId: staffId, redeemedByStaffEmail: staffEmail } }, { new: true }).populate('rewardId', 'title partnerId').lean();
+  if (!row) return null;
+  return { redemption: toRedemption({ ...row, rewardId: row.rewardId?._id || row.rewardId }), rewardTitle: row.rewardId?.title || 'Reward', partnerId: String(row.rewardId?.partnerId || partnerId) };
+};
+
 module.exports = {
   Reward,
   Redemption,
@@ -255,6 +294,8 @@ module.exports = {
   assignVoucherCode,
   getRedemptionsByUserId,
   getRedemptionById,
+  getRedemptionForPartnerCode,
+  markRedemptionUsed,
   listAllRewards,
   listAllRedemptions,
   createReward,
