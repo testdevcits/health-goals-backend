@@ -16,6 +16,7 @@ const schema = new mongoose.Schema({
   metric: { type: String, enum: ['STEPS', 'WORKOUT_HOURS', 'MEDITATION_HOURS'], required: true },
   targetValue: { type: Number, required: true, min: 1, max: 100000000 },
   period: { type: String, enum: ['WEEKLY', 'MONTHLY', 'DURATION'], default: 'MONTHLY' },
+  startDate: { type: String, default: null },
   durationDays: { type: Number, default: null, min: 1, max: 30 },
   winnersCount: { type: Number, default: 1, min: 1, max: 1000 },
   badgeTitle: { type: String, trim: true, maxlength: 60, default: '' },
@@ -30,11 +31,11 @@ schema.index({ status: 1, audience: 1, createdAt: -1 });
 const RewardRule = mongoose.model('AdminRewardRule', schema);
 const memoryRules = [];
 const idOf = row => String(row?._id || row?.id);
-const dto = row => ({ id: idOf(row), title: row.title, ruleType: row.ruleType || 'BADGE', audience: row.audience, targetUserId: row.targetUserId || null, targetGroupId: row.targetGroupId || null, targetValue: row.targetValue, metric: row.metric, period: row.period || 'MONTHLY', durationDays: row.durationDays || null, winnersCount: row.winnersCount || 1, badgeTitle: row.badgeTitle || '', bonusPoints: row.bonusPoints || 0, status: row.status, createdAt: row.createdAt || row.created_at, updatedAt: row.updatedAt || row.updated_at });
+const dto = row => ({ id: idOf(row), title: row.title, ruleType: row.ruleType || 'BADGE', audience: row.audience, targetUserId: row.targetUserId || null, targetGroupId: row.targetGroupId || null, targetValue: row.targetValue, metric: row.metric, period: row.period || 'MONTHLY', startDate: row.startDate || null, durationDays: row.durationDays || null, winnersCount: row.winnersCount || 1, badgeTitle: row.badgeTitle || '', bonusPoints: row.bonusPoints || 0, status: row.status, createdAt: row.createdAt || row.created_at, updatedAt: row.updatedAt || row.updated_at });
 
 function validate(input, partial = false) {
   const body = input || {};
-  const allowed = ['title', 'ruleType', 'audience', 'targetUserId', 'targetGroupId', 'metric', 'targetValue', 'period', 'durationDays', 'winnersCount', 'badgeTitle', 'bonusPoints', 'status'];
+  const allowed = ['title', 'ruleType', 'audience', 'targetUserId', 'targetGroupId', 'metric', 'targetValue', 'period', 'durationDays', 'startDate', 'winnersCount', 'badgeTitle', 'bonusPoints', 'status'];
   if (Object.keys(body).some(key => !allowed.includes(key))) throw new AppError('Unsupported reward rule field', 400);
   const data = {};
   for (const key of allowed) if (body[key] !== undefined) data[key] = body[key];
@@ -56,6 +57,7 @@ function validate(input, partial = false) {
     if (data.period === undefined && !partial) data.period = 'MONTHLY';
     else if (!['WEEKLY', 'MONTHLY', 'DURATION'].includes(data.period)) throw new AppError('Choose a weekly, monthly, or duration-based period', 400);
   }
+  if(data.startDate!==undefined&&data.startDate!==null&&(!/^\d{4}-\d{2}-\d{2}$/.test(data.startDate)||!Number.isFinite(Date.parse(data.startDate))||new Date(data.startDate).toISOString().slice(0,10)!==data.startDate))throw new AppError('Choose a valid challenge start date',400);
   if (data.period === 'DURATION' && (data.durationDays === undefined || !Number.isSafeInteger(data.durationDays) || data.durationDays < 1 || data.durationDays > 30)) throw new AppError('Duration must be between 1 and 30 days', 400);
   if (data.durationDays !== undefined && data.durationDays !== null && (!Number.isSafeInteger(data.durationDays) || data.durationDays < 1 || data.durationDays > 30)) throw new AppError('Duration must be between 1 and 30 days', 400);
   if (!partial && data.durationDays === undefined) data.durationDays = null;
@@ -113,6 +115,7 @@ function duplicateKey(data) {
     data.ruleType || 'BADGE', data.audience, data.targetUserId || null,
     data.targetGroupId || null, data.metric, Number(data.targetValue),
     data.period || 'MONTHLY', data.period === 'DURATION' ? Number(data.durationDays) : null,
+    data.period === 'DURATION' ? data.startDate || null : null,
     data.ruleType === 'LEADERBOARD' ? Number(data.winnersCount || 1) : 1,
     (data.badgeTitle || '').trim().toLowerCase(), Number(data.bonusPoints || 0)
   ])).digest('hex');

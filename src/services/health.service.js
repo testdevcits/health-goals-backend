@@ -94,6 +94,8 @@ const createRecord = async (userId, payload, requestId = null) => {
 
   const result = await ingestion.ingest(userId, payload);
   await deviceModel.touchDeviceSync(userId, payload.deviceId);
+  // Ingestion remains successful if reward evaluation needs a worker retry.
+  try{await require('./reward-engine.service').evaluate();}catch(error){console.error('Reward evaluation queued for retry:',error.code||error.name);}
   return result;
 };
 

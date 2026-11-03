@@ -122,6 +122,7 @@ router.get('/users/:id',async(req,res,next)=>{
     successResponse(res,200,'User details',{user,wallet:points,recordCount:records.total,deviceCount:devices.total,canChangeStatus:user.id!==req.user.id&&!env.adminEmails.includes(user.email.toLowerCase())});
   }catch(error){next(error);}
 });
+router.get('/users/:id/record-chart',async(req,res,next)=>{try{const user=await findUser(req.params.id);successResponse(res,200,'All-date activity chart',await require('../services/record-chart.service').chart(user.id,req.query));}catch(error){next(error);}});
 router.get('/users/:id/steps',async(req,res,next)=>{try{const user=await findUser(req.params.id);successResponse(res,200,'Date-wise steps',await require('../services/step-history.service').history(user.id,req.query));}catch(error){next(error);}});
 router.get('/users/:id/settlements',async(req,res,next)=>{
   try { const user=await findUser(req.params.id); const {page,limit}=query.buildQuery('records',req.query); successResponse(res,200,'Daily settlement history',await require('../services/daily-settlement.service').history(user.id,page,limit,req.query)); }

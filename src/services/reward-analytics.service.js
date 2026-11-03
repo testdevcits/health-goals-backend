@@ -5,14 +5,14 @@ const {calculate,dayKey}=require('./daily-rules');
 const {AppError}=require('../middleware/error.middleware');
 function period(rule,now){
  const today=dayKey(now),date=new Date(`${today}T00:00:00Z`);
- if(rule.period==='DURATION'){const start=dayKey(rule.createdAt);return {start,end:new Date(new Date(`${start}T00:00:00Z`).getTime()+(rule.durationDays-1)*86400000).toISOString().slice(0,10)};}
+ if(rule.period==='DURATION'){const start=rule.startDate||dayKey(rule.createdAt);return {start,end:new Date(new Date(`${start}T00:00:00Z`).getTime()+(rule.durationDays-1)*86400000).toISOString().slice(0,10)};}
  if(rule.period==='WEEKLY'){date.setUTCDate(date.getUTCDate()-(date.getUTCDay()+6)%7);const start=date.toISOString().slice(0,10);date.setUTCDate(date.getUTCDate()+6);return {start,end:date.toISOString().slice(0,10)};}
  return {start:today.slice(0,7)+'-01',end:new Date(Date.UTC(date.getUTCFullYear(),date.getUTCMonth()+1,0)).toISOString().slice(0,10)};
 }
 async function analytics(id,now=new Date()){
  const rule=(await rules.list()).items.find(row=>row.id===id);if(!rule)throw new AppError('Reward rule not found',404);
  const window=period(rule,now),targets=await rules.options();
- const records=env.useMongoDB?await health.HealthRecord.find({deleted:{$ne:true},$or:[{activityDate:{$gte:window.start,$lte:window.end}},{activityDate:{$exists:false},recordedAt:{$gte:new Date(`${window.start}T00:00:00+05:30`),$lt:new Date(new Date(`${window.end}T00:00:00+05:30`).getTime()+86400000)}}]}).lean():health.healthRecords;
+ const records=env.useMongoDB?await health.HealthRecord.find({deleted:{$ne:true},$or:[{activityDate:{$gte:window.start,$lte:window.end}},{activityDate:{$exists:false},recordedAt:{$gte:new Date(`${window.start}T00:00:00+05:30`),$lt:new Date(new Date(`${window.end}T00:00:00+05:30`).getTime()+86400000)}}]}).lean():health.healthRecords.map(health.toHealthRecord);
  const days=new Map();
  for(const record of records){const day=record.activityDate||dayKey(record.recordedAt);if(record.deleted||day<window.start||day>window.end||new Date(record.recordedAt)>now)continue;const key=`${record.userId}:${day}`;if(!days.has(key))days.set(key,{userId:String(record.userId),records:[]});days.get(key).records.push(record);}
  const totals=new Map();for(const {userId,records:rows} of days.values()){const value=calculate(rows);const amount=rule.metric==='STEPS'?value.steps:rule.metric==='WORKOUT_HOURS'?value.workoutMinutes/60:value.meditationMinutes/60;totals.set(userId,(totals.get(userId)||0)+amount);}

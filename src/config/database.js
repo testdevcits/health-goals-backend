@@ -16,6 +16,7 @@ const connectDatabase = async () => {
   require('../services/activity-ingestion.service');
   require('../models/wallet.model');
   require('../services/coin-rules.service');
+  require('../services/reward-engine.service');
   await Promise.all(Object.values(mongoose.models).map(model => model.init()));
   console.log('MongoDB connected; indexes ready.');
 };

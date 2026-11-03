@@ -6,6 +6,7 @@ const corsOptions = require('./config/cors');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const env = require('./config/env');
+const rewardWorker = require('./jobs/reward-worker');
 const settlementWorker = require('./jobs/settlement-worker');
 const { connectDatabase, disconnectDatabase } = require('./config/database');
 const { ensureDatabaseConnected } = require('./config/vercel-database');
@@ -86,6 +87,7 @@ const startServer = async () => {
   try {
     await connectDatabase();
     settlementWorker.start();
+    rewardWorker.start();
     const httpServer = http.createServer(app);
     const io = new Server(httpServer, {
       cors: { origin: corsOptions.origin, methods: ['GET', 'POST'] },
@@ -111,12 +113,14 @@ const startServer = async () => {
 
 process.on('SIGINT', async () => {
   await settlementWorker.stop();
+  await rewardWorker.stop();
   await disconnectDatabase();
   process.exit(0);
 });
 
 process.on('SIGTERM', async () => {
   await settlementWorker.stop();
+  await rewardWorker.stop();
   await disconnectDatabase();
   process.exit(0);
 });
