@@ -84,7 +84,8 @@ async function list(kind, params = {}) {
       .sort((a,b)=>new Date(b[config.time])-new Date(a[config.time]) || String(b.id).localeCompare(String(a.id)));
     total=rows.length;items=rows.slice((page-1)*limit,page*limit);
   }
-  if (kind !== 'users') items = await attachUsers(items);
+  if (kind === 'users') items = items.map(user => ({...user,isAdmin:env.adminEmails.includes(String(user.email||'').toLowerCase())}));
+  else items = await attachUsers(items);
   let deviceFilters;
   if (kind === 'devices') {
     // Read distinct registered combinations across all pages, independent of search.
