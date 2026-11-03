@@ -7,6 +7,7 @@ const community = require('../models/community.model');
 
 const schema = new mongoose.Schema({
   duplicateKey: { type: String },
+  seedKey: { type: String },
   title: { type: String, required: true, trim: true, maxlength: 100 },
   ruleType: { type: String, enum: ['BADGE', 'LEADERBOARD', 'CHALLENGE'], default: 'BADGE' },
   audience: { type: String, enum: ['INDIVIDUAL', 'GROUP'], required: true },
@@ -23,6 +24,7 @@ const schema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
 }, { timestamps: true });
+schema.index({ seedKey: 1 }, { unique: true, sparse: true });
 schema.index({ duplicateKey: 1 }, { unique: true, sparse: true });
 schema.index({ status: 1, audience: 1, createdAt: -1 });
 const RewardRule = mongoose.model('AdminRewardRule', schema);
