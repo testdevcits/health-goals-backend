@@ -63,6 +63,7 @@ async function main(){
   const now=new Date(),leaseToken=crypto.randomUUID();
   const job=await DailyActivity.findOneAndUpdate({userId,day,dueAt:{$lte:now},lockUntil:{$lte:now},$expr:{$gt:['$revision','$settledRevision']}},{$set:{leaseToken,lockUntil:new Date(+now+120000),state:'PROCESSING'},$inc:{attempts:1}},{new:true}).lean();
   if(job)credited+=(await daily.settle(job,now))?.credited||0;
+  console.log(`Demo activity ready: ${day}`);
  }
  // A pending activity today demonstrates the midnight settlement boundary.
  await health.createRecord(userId,{metricType:'water_checkin',value:1,unit:'checkin',recordedAt:new Date().toISOString(),source:'app',sourceRecordId:`demo-v1:${today}:water_checkin`,deviceId:device.id,metadata:{demo:true,synthetic:true}});
