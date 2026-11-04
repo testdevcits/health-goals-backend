@@ -2,6 +2,8 @@ const healthModel = require('../models/health.model');
 const deviceModel = require('../models/device.model');
 const ingestion = require('./activity-ingestion.service');
 const { AppError } = require('../middleware/error.middleware');
+const env = require('../config/env');
+const { DailyActivity, memoryDays } = require('../models/daily-activity.model');
 
 const allowedMetricTypes = new Set([
   'steps', 'workout', 'meditation', 'water_checkin', 'sleep_checkin',
@@ -116,8 +118,12 @@ const syncRecords = async (userId, payload, requestId = null) => {
 
   // Keep the same rolling window read by Android. Prune only Health Connect
   // imports so manually entered or other-source health records are preserved.
+  // Leave records needed by any unsettled daily-points job intact.
   const retentionCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-  const pruned = await healthModel.pruneHealthConnectRecords(userId, retentionCutoff);
+  const pendingDays = env.useMongoDB
+    ? await DailyActivity.find({ userId, $expr: { $gt: ['$revision', '$settledRevision'] } }).distinct('day')
+    : [...memoryDays.values()].filter(row => String(row.userId) === String(userId) && row.revision > row.settledRevision).map(row => row.day);
+  const pruned = await healthModel.pruneHealthConnectRecords(userId, retentionCutoff, pendingDays);
 
   return {
     total: results.length,

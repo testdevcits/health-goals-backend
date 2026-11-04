@@ -107,6 +107,10 @@ Record ke required fields: `metricType`, `value`, `unit`, `recordedAt`, `source`
 
 Supported metrics: `steps`, `workout`, `meditation`, `water_checkin`, `sleep_checkin`, `running`, `walking`, `heart_rate`, `sleep`, `oxygen_saturation`, `weight`, `blood_pressure`, `calories`, `distance`, `active_minutes`.
 
+`/health/sync` identifies each record by `(userId, source, sourceRecordId)`. Re-sending the same record with the same or lower `sourceVersion` is a duplicate; a higher version updates that existing record, and the response counts it under `updated` rather than `created`. After a successful sync batch, the backend removes that user's `health_connect` records older than the rolling 7-day window (`recordedAt < now - 168 hours`). Other record sources are not pruned. Records needed by a pending daily-points settlement are kept until settlement completes. This cleanup runs on sync requests; it is not a scheduled job.
+
+The sync response includes `total`, `created`, `updated`, `duplicates`, `pruned`, `rewards`, and `records`.
+
 Coins ke liye steps mein valid interval, origin aur automatic/active recording metadata chahiye. Workout/meditation mein interval timestamps bhejein; workout mein `activityType` bhi. Habits ke liye `value: 1`, `unit: "checkin"` use karein. Interval ko IST midnight par split karein.
 
 Same user + source + sourceRecordId ki same/older version duplicate hai. Correction ke liye higher `sourceVersion` bhejein. Source record invalidate karne ke liye higher version ke saath `deleted: true` aur original required fields bhejein. Batch partially save ho sakta hai; same IDs/versions ke saath retry karein.
