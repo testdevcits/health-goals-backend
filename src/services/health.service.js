@@ -114,10 +114,17 @@ const syncRecords = async (userId, payload, requestId = null) => {
     results.push(result);
   }
 
+  // Keep the same rolling window read by Android. Prune only Health Connect
+  // imports so manually entered or other-source health records are preserved.
+  const retentionCutoff = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const pruned = await healthModel.pruneHealthConnectRecords(userId, retentionCutoff);
+
   return {
     total: results.length,
-    created: results.filter((item) => !item.duplicate).length,
+    created: results.filter((item) => !item.duplicate && !item.updated).length,
+    updated: results.filter((item) => item.updated).length,
     duplicates: results.filter((item) => item.duplicate).length,
+    pruned,
     rewards: results.flatMap((item) => item.rewards),
     records: results.map((item) => item.record)
   };

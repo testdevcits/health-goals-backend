@@ -150,6 +150,22 @@ const findBySourceRecord = async (userId, source, sourceRecordId) => {
   return record ? toHealthRecord(record) : null;
 };
 
+const pruneHealthConnectRecords = async (userId, before, protectedActivityDates = []) => {
+  if (env.useMongoDB) {
+    const result = await HealthRecord.deleteMany({ userId, source: 'health_connect', recordedAt: { $lt: before }, activityDate: { $nin: protectedActivityDates } });
+    return result.deletedCount || 0;
+  }
+  let deleted = 0;
+  for (let index = healthRecords.length - 1; index >= 0; index -= 1) {
+    const record = healthRecords[index];
+    if (String(record.user_id) === String(userId) && record.source === 'health_connect' && new Date(record.recorded_at) < before && !protectedActivityDates.includes(record.activityDate)) {
+      healthRecords.splice(index, 1);
+      deleted += 1;
+    }
+  }
+  return deleted;
+};
+
 const getHealthRecordsByUserId = async (userId, filters = {}) => {
   const from = filters.from ? new Date(filters.from) : null;
   const to = filters.to ? new Date(filters.to) : null;
@@ -275,6 +291,7 @@ module.exports = {
   HealthRecord,
   createHealthRecord,
   findBySourceRecord,
+  pruneHealthConnectRecords,
   getHealthRecordsByUserId,
   getDailyHealthHistory,
   getDashboardByUserId
