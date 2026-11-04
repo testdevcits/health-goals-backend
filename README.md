@@ -93,7 +93,7 @@ npm run dev
 
 ## API Endpoints
 
-For Android request payloads, response examples, authentication/OTP, Health Connect sync, daily points, wallet, rewards, devices, and community, see the [Android API Integration Guide](ACTIVITY_API.md). The concise endpoint catalog is in [API_LIST.md](API_LIST.md).
+For Android request payloads, response examples, authentication/OTP, Health Connect sync, daily points, wallet, rewards, devices, and community, see the [Android API and Flow Guide](../android/docs/ANDROID_API_AND_FLOW.md). The concise endpoint catalog is in [API_LIST.md](API_LIST.md).
 
 - `GET /api/health`
 - `POST /api/v1/auth/register`
@@ -294,7 +294,7 @@ Set `APP_MODE=live` to send randomly generated codes through SMTP. This is the d
 
 Health sync no longer issues instant task rewards. It stores activities and queues a durable user/day settlement. At midnight IST, a persistent worker processes at most 20 user/day jobs per pass, with concurrency 2; repeat/late syncs credit only the additional daily entitlement. Steps, workouts, meditation and habit check-ins use a saved versioned daily rule snapshot.
 
-See [ACTIVITY_API.md](ACTIVITY_API.md) for Android payloads, current reward amounts, pending/history/ledger APIs, batch/retry behavior, source-version updates, correction policy and retention requirements. Your MongoDB must support transactions (replica set/Atlas); the worker requires persistent MongoDB. Set `SETTLEMENT_ENABLED=false` only to pause scheduling, not to remove the replica-set requirement. No historical health/coin data is automatically expired; database backup/restore operations still need to be configured separately.
+See [Android API and Flow Guide](../android/docs/ANDROID_API_AND_FLOW.md) for Android payloads, pending/history/ledger APIs, batch/retry behavior, source-version updates, and correction policy. Your MongoDB must support transactions (replica set/Atlas); the worker requires persistent MongoDB. Set `SETTLEMENT_ENABLED=false` only to pause scheduling, not to remove the replica-set requirement. No historical health/coin data is automatically expired; database backup/restore operations still need to be configured separately.
 
 
 ## One-hour sessions and permanent User IDs

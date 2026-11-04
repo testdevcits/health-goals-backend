@@ -111,7 +111,7 @@ Coins ke liye steps mein valid interval, origin aur automatic/active recording m
 
 Same user + source + sourceRecordId ki same/older version duplicate hai. Correction ke liye higher `sourceVersion` bhejein. Source record invalidate karne ke liye higher version ke saath `deleted: true` aur original required fields bhejein. Batch partially save ho sakta hai; same IDs/versions ke saath retry karein.
 
-Sync se instant coins credit nahi hote. IST day complete hone ke baad worker settlement karta hai; late data ka additional entitlement baad mein credit ho sakta hai. Detailed ingestion rules: [ACTIVITY_API.md](ACTIVITY_API.md). Current rule versions ke liye admin `/admin/coin-rules` dekhein.
+Sync se instant coins credit nahi hote. IST day complete hone ke baad worker settlement karta hai; late data ka additional entitlement baad mein credit ho sakta hai. Android client contract and ingestion details: [Android API and Flow guide](../android/docs/ANDROID_API_AND_FLOW.md). Current rule versions ke liye admin `/admin/coin-rules` dekhein.
 
 ## 4. Activity / daily coins — 4 APIs (User)
 
