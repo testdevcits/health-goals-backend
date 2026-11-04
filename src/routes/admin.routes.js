@@ -14,6 +14,7 @@ router.use(authenticate);
 router.use((req,res,next)=>env.adminEmails.includes(req.user.email.toLowerCase()) ? next() : next(new AppError('Admin access required',403)));
 const coinRules=require('../services/coin-rules.service');
 const rewardRules=require('../services/reward-rule.service');
+router.get('/groups',async(req,res,next)=>{try{successResponse(res,200,'Group activity overview',await require('../models/community.model').groupRankings(req.query.day,true));}catch(error){next(error);}});
 router.get('/coin-rules',async(req,res,next)=>{try{const {page,limit}=query.buildQuery('users',req.query);successResponse(res,200,'Point rule versions',await coinRules.list(page,limit));}catch(error){next(error);}});
 router.post('/coin-rules',adminWriteLimiter,async(req,res,next)=>{try{successResponse(res,201,'New point rule version scheduled',await coinRules.create(req.body,req.user.id));}catch(error){next(error);}});
 router.get('/reward-rules',async(req,res,next)=>{try{successResponse(res,200,'Reward rules',await rewardRules.list());}catch(error){next(error);}});
@@ -22,18 +23,6 @@ router.get('/reward-rules/options',async(req,res,next)=>{try{successResponse(res
 router.post('/reward-rules',adminWriteLimiter,async(req,res,next)=>{try{const rule=await rewardRules.create(req.body,req.user.id);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_RULE_CREATED',metadata:{ruleId:rule.id,title:rule.title,audience:rule.audience,metric:rule.metric},requestId:req.requestId});successResponse(res,201,'Reward rule created',rule);}catch(error){next(error);}});
 router.patch('/reward-rules/:id',adminWriteLimiter,async(req,res,next)=>{try{const rule=await rewardRules.update(req.params.id,req.body,req.user.id);if(!rule)throw new AppError('Reward rule not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_RULE_UPDATED',metadata:{ruleId:rule.id,changes:Object.keys(req.body||{})},requestId:req.requestId});successResponse(res,200,'Reward rule updated',rule);}catch(error){next(error);}});
 router.delete('/reward-rules/:id',adminWriteLimiter,async(req,res,next)=>{try{const rule=await rewardRules.remove(req.params.id);if(!rule)throw new AppError('Reward rule not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_REWARD_RULE_DELETED',metadata:{ruleId:rule.id,title:rule.title},requestId:req.requestId});successResponse(res,200,'Reward rule deleted',{id:rule.id});}catch(error){next(error);}});
-router.patch('/groups/:id/member-limit',adminWriteLimiter,async(req,res,next)=>{try{
- const limit=req.body?.maxMembers;
- if(!Number.isSafeInteger(limit)||limit<2||limit>500)throw new AppError('Group member limit must be between 2 and 500',400);
- const community=require('../models/community.model');let group;
- if(env.useMongoDB){
-  if(!require('mongoose').isValidObjectId(req.params.id))throw new AppError('Group not found',404);
-  group=await community.Group.findOneAndUpdate({_id:req.params.id,$expr:{$lte:[{$size:{$ifNull:['$members',[]]}},limit]}},{$set:{maxMembers:limit}},{new:true}).lean();
-  if(!group){if(!await community.Group.exists({_id:req.params.id}))throw new AppError('Group not found',404);throw new AppError('Limit cannot be less than the current member count',409);}
- }else{group=community.memoryGroups.find(row=>String(row.id)===req.params.id);if(!group)throw new AppError('Group not found',404);if(group.members.length>limit)throw new AppError('Limit cannot be less than the current member count',409);group.maxMembers=limit;}
- await audit.createAuditLog({userId:req.user.id,action:'ADMIN_GROUP_LIMIT_UPDATED',metadata:{groupId:req.params.id,maxMembers:limit},requestId:req.requestId});
- successResponse(res,200,'Group member limit updated',{id:req.params.id,maxMembers:limit});
-}catch(error){next(error);}});
 router.get('/overview',async(req,res,next)=>{try{successResponse(res,200,'Admin overview',await query.overview());}catch(error){next(error);}});
 router.get('/partners',async(req,res,next)=>{try{successResponse(res,200,'Partners',{items:await partnerModel.list()});}catch(error){next(error);}});
 router.get('/partners/:id/summary',async(req,res,next)=>{try{

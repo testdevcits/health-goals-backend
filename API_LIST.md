@@ -140,9 +140,15 @@ Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=
 |---|---|---|
 | GET | `/community/groups` | Apne groups list karein. |
 | GET | `/community/groups/discover` | Public groups list karein. |
-| POST | `/community/groups` | Group banayein: `name`, optional `description`, `emoji`, `private`. Creator automatically member hota hai. |
+| POST | `/community/groups` | Group banayein: `name`, optional `description`, `emoji`, `private`. Creator GL hota hai; group cap fixed 10 members. |
 | GET | `/community/groups/:id` | Group details; private group sirf members ke liye. |
-| POST | `/community/groups/:id/join` | Group join karein. |
+| GET | `/community/users/search?q=...` | Active users ko name/public ID se dhoondein (max 10 results). |
+| POST | `/community/groups/:id/join` | Public group join karein; private groups mein GL invite karta hai. |
+| POST | `/community/groups/:id/members` | GL kisi active user ko add karein. Body: `{ "publicId": "USR-..." }`. |
+| POST | `/community/groups/:id/leave` | Group chhodein. GL leave kare to oldest member GL banega. |
+| GET | `/community/groups/:id/activity?day=YYYY-MM-DD` | Daily group totals aur har member ka activity count. |
+| GET | `/community/groups/leaderboard?day=YYYY-MM-DD` | Public groups ka daily steps leaderboard. |
+| GET | `/community/groups/:id/leaderboard` | Group ke andar members ka existing 7-day steps leaderboard. |
 | GET/POST | `/community/groups/:id/messages` | Joined members ka chat history/send; send body `message`. |
 | Socket.IO | `group:join` | Auth token ke saath joined group room join karein; payload `{ groupId }`. |
 | Socket.IO | `group:send` | Payload `{ groupId, message }`; saved message group members ko `group:message` event mein milta hai. |
