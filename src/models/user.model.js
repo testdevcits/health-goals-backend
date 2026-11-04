@@ -29,6 +29,7 @@ const userSchema = new mongoose.Schema(
     weightKg: { type: Number, default: null },
     birthDate: { type: String, default: '' },
     profileImageUrl: { type: String, default: '' },
+    encryptedPhone: { type: String, default: null, select: false },
     deviceProfile: { type: deviceProfileSchema, default: null },
     email: {
       type: String,
@@ -97,6 +98,8 @@ const toAuthUser = (user) => ({
   password_hash: user.passwordHash || user.password_hash,
   refresh_token_hash: user.refreshTokenHash || user.refresh_token_hash
 });
+
+const toProfileUser = user => ({ ...toPublicUser(user), phone: user.encryptedPhone ? require('../services/voucher-code.service').decrypt(user.encryptedPhone) : '' });
 
 const createUser = async ({ name, email, passwordHash, role = 'USER', companyCode = '', goal = '' }) => {
   const publicId = `USR-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
@@ -224,6 +227,11 @@ module.exports = {
     return user ? toPublicUser(user) : null;
   },
   listUsers: async () => env.useMongoDB ? (await User.find().sort({ createdAt: -1 }).lean()).map(toPublicUser) : users.map(toPublicUser),
+  findUserProfileById: async (id) => {
+    if (!env.useMongoDB) { const user=users.find(row=>row.id===id); return user?toProfileUser(user):null; }
+    if (!mongoose.Types.ObjectId.isValid(id)) return null;
+    const user=await User.findById(id).select('+encryptedPhone'); return user?toProfileUser(user):null;
+  },
   createUser,
   findUserByEmail,
   findUserByPublicId: async (publicId) => {
@@ -253,10 +261,10 @@ module.exports = {
       const user = users.find((currentUser) => currentUser.id === id);
       if (!user) return null;
       Object.assign(user, profile, { updated_at: new Date().toISOString() });
-      return toPublicUser(user);
+      return toProfileUser(user);
     }
-    const user = await User.findByIdAndUpdate(id, { $set: profile }, { new: true, runValidators: true });
-    return user ? toPublicUser(user) : null;
+    const user = await User.findByIdAndUpdate(id, { $set: profile }, { new: true, runValidators: true }).select('+encryptedPhone');
+    return user ? toProfileUser(user) : null;
   },
   updateHealthGoal: async (id, metricType, targetValue) => {
     if (!env.useMongoDB) {

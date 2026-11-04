@@ -180,7 +180,7 @@ const logout = async (userId) => {
 };
 
 const getCurrentUser = async (userId) => {
-  const user = await userModel.findUserById(userId);
+  const user = await userModel.findUserProfileById(userId);
   if (!user) {
     throw new AppError('User not found', 404);
   }
@@ -190,7 +190,7 @@ const getCurrentUser = async (userId) => {
 
 const updateCurrentProfile = async (userId, payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new AppError('Profile details are required', 400);
-  const allowed = ['name', 'goal', 'heightCm', 'weightKg', 'birthDate'];
+  const allowed = ['name', 'goal', 'heightCm', 'weightKg', 'birthDate', 'phone'];
   const profile = {};
   for (const field of allowed) {
     if (payload[field] === undefined) continue;
@@ -201,6 +201,12 @@ const updateCurrentProfile = async (userId, payload) => {
       const valid = field === 'heightCm' ? number >= 50 && number <= 300 : number >= 20 && number <= 500;
       if (!Number.isFinite(number) || !valid) throw new AppError(`${field} is outside the allowed range`, 400);
       profile[field] = number;
+    } else if (field === 'phone') {
+      if (typeof value !== 'string' || value.trim().length > 24) throw new AppError('phone must be a valid phone number', 400);
+      const phone = value.trim();
+      const digits = phone.replace(/\D/g, '');
+      if (phone && (digits.length < 10 || digits.length > 15)) throw new AppError('phone must contain 10 to 15 digits', 400);
+      profile.encryptedPhone = phone ? require('./voucher-code.service').encrypt(phone) : null;
     } else {
       if (typeof value !== 'string' || value.trim().length > (field === 'name' ? 100 : 500)) throw new AppError(`${field} must be text`, 400);
       if (field === 'name' && !value.trim()) throw new AppError('Name cannot be empty', 400);

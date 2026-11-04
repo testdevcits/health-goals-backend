@@ -5,6 +5,7 @@ const { redemptionLimiter } = require('../middleware/rate-limit.middleware');
 
 const router = express.Router();
 
+router.get('/leaderboard-tickets',authenticate,async(req,res,next)=>{try{const items=await require('../models/ticket-claim.model').listForRecipient(req.user.id);require('../utils/response').successResponse(res,200,'Your leaderboard ticket rewards',{items});}catch(error){next(error);}});
 router.get('/competitions',authenticate,async(req,res,next)=>{try{const engine=require('../services/reward-engine.service');await engine.evaluate();require('../utils/response').successResponse(res,200,'Rule competitions',await engine.forUser(req.user.id));}catch(error){next(error);}});
 
 router.get('/', authenticate, rewardController.listRewards);

@@ -301,10 +301,10 @@ All paths below are relative to `/api/v1`. Authenticated calls use the bearer to
 `GET /auth/me` response data is `{ "user": { ... } }`. Profile patch accepts any supported subset:
 
 ```json
-{"name":"Asha Kumar","goal":"Be more active","heightCm":165,"weightKg":62,"birthDate":"15/06/1998"}
+{"name":"Asha Kumar","goal":"Be more active","heightCm":165,"weightKg":62,"birthDate":"15/06/1998","phone":"+91 98765 43210"}
 ```
 
-Email is read-only. Health-goal request:
+Contact `phone` is optional, validated as 10–15 digits, encrypted at rest, and returned by `GET /auth/me` only to its owner. Admin ticket claims snapshot the winner/GL's saved number so the admin consent form can prefill it. Email is read-only. Health-goal request:
 
 ```json
 {"metricType":"steps","targetValue":8000}
@@ -520,7 +520,7 @@ This flow is in the existing Admin **Rewards** page under the **Leaderboard tick
 1. Select a completed month (`YYYY-MM`) and audience (`INDIVIDUAL` or `GROUP`). Current and future months are rejected. The ranking is based on counted daily steps in Asia/Kolkata: each user's records for a day use the existing overlap/source de-duplication calculation, then daily totals are added for the month.
 2. The first-place winner can be made into a ticket claim. Individual rewards go to the user's registered email. A group reward is addressed to its GL's registered email. A group score sums each current member's monthly total; creating a claim saves the members and their totals as a claim-time audit snapshot.
 3. The admin records the winner's explicit permission to use the submitted phone number for manual booking and email the ticket image to the registered address. The claim saves the consent method, time, admin ID, terms version, and terms text. Phone numbers are encrypted at rest. The admin claim API can return the number so staff can complete the booking; the UI only shows it in this admin fulfillment view.
-4. After booking, the admin uploads a PNG/JPEG/WebP ticket image (up to 5 MB), optional booking reference, and ticket count. The server emails the image attachment to the winner and records recipient, send time, admin, ticket count, reference, filename, content type, and SHA-256 image digest. The original image is not retained by the application.
+4. After booking, the admin enters the travel/event date, ticket/PNR number, optional booking reference, ticket count, and uploads a PNG/JPEG/WebP ticket image (up to 5 MB). The server emails the image attachment to the winner and stores the image encrypted so it can also appear in the winner's Android Rewards screen. It records recipient, send time, admin, ticket date/number, ticket count, reference, filename, content type, and SHA-256 image digest.
 
 There is no user-facing consent endpoint in this flow. The `confirmed` value is an admin attestation that the winner agreed through the selected method; it does not mean the app independently captured a user click. Do not mark it confirmed before permission is actually received. SMTP and `VOUCHER_ENCRYPTION_KEY` must be configured. MongoDB must be enabled for claims to survive backend restarts; memory mode is temporary.
 
@@ -540,7 +540,7 @@ There is no user-facing consent endpoint in this flow. The `confirmed` value is 
 
 For `audience=GROUP`, each item has `id`, `name`, `imageUrl`, `leaderId`, `leaderName`, `leaderEmail`, `members` (each with `id`, `name`, `email`, `steps`, and `role`), `memberCount`, `steps`, `rank`, and `claimExists`.
 
-`GET /api/v1/admin/ticket-rewards/claims?month=2026-10` returns `{ "items": [<claim>] }`. Claim state is `CONSENT_PENDING`, `READY_TO_SEND`, or `SENT`. Consent details include `method`, `confirmedAt`, `confirmedBy`, `termsVersion`, `phoneLast4`, and the full phone for this admin-only endpoint. Delivery details are null until sent.
+`GET /api/v1/admin/ticket-rewards/claims?month=2026-10` returns `{ "items": [<claim>] }`. Claim state is `CONSENT_PENDING`, `READY_TO_SEND`, or `SENT`. The admin-only claim includes the saved profile contact phone as `contactPhone`; once consent is recorded, consent details include `method`, `confirmedAt`, `confirmedBy`, `termsVersion`, `phoneLast4`, and the confirmed full phone. Delivery details are null until sent.
 
 Create the winner claim:
 
@@ -559,21 +559,30 @@ Save consent before ticket sending:
 POST /api/v1/admin/ticket-rewards/claims/<claim-id>/consent
 Content-Type: application/json
 
-{"confirmed":true,"method":"PHONE","phone":"+91 98765 43210"}
+{"confirmed":true,"method":"PHONE"}
 ```
 
-`method` is `PHONE`, `EMAIL`, or `IN_PERSON`; `confirmed` must be `true`. Success is `200` with the updated claim. Phone must contain 10–15 digits after formatting is removed.
+`method` is `PHONE`, `EMAIL`, or `IN_PERSON`; `confirmed` must be `true`. The winner phone captured on the claim is used automatically. Admin may pass an optional `phone` override. Success is `200` with the updated claim. Phone must contain 10–15 digits after formatting is removed; if the winner profile has no saved number, update the profile before recording consent.
 
-Email a ticket after manual booking:
+Email and save a ticket after manual booking:
 
 ```http
 POST /api/v1/admin/ticket-rewards/claims/<claim-id>/send
 Content-Type: application/json
 
-{"image":"data:image/jpeg;base64,<base64-data>","filename":"ticket.jpg","ticketCount":1,"bookingReference":"BOOK-123"}
+{"image":"data:image/jpeg;base64,<base64-data>","filename":"ticket.jpg","ticketDate":"2026-12-20","ticketNumber":"TKT-123456","ticketCount":1,"bookingReference":"BOOK-123"}
 ```
 
-`image` must be a PNG/JPEG/WebP data URI no larger than 5 MB when decoded; `filename` is optional, `ticketCount` is 1–10, and `bookingReference` is optional (max 120 chars). Success is `200` with the saved claim and delivery details. The request sends an email attachment to the winner's registered email. SMTP failure returns `503` and leaves the claim ready to retry.
+`image` must be a PNG/JPEG/WebP data URI no larger than 5 MB when decoded; `filename` is optional, `ticketDate` must be `YYYY-MM-DD`, `ticketNumber` is required (max 100 chars), `ticketCount` is 1–10, and `bookingReference` is optional (max 120 chars). Success is `200` with the saved claim and delivery details. The request emails the image attachment to the winner's registered email and stores it encrypted for the user app. SMTP failure returns `503` and leaves the claim ready to retry.
+
+The Android user endpoint is:
+
+```http
+GET /api/v1/rewards/leaderboard-tickets
+Authorization: Bearer <accessToken>
+```
+
+It returns `{ "items": [<ticket-claim>] }` for the signed-in reward recipient only. An individual winner sees their claim; for a group win, only the GL sees the group's claim. Sent items include `ticketDate`, `ticketNumber`, `ticketCount`, optional `bookingReference`, safe delivery metadata, and `ticketImage` as an authenticated data URI. Consent phone, admin IDs, and the other group members' snapshot are not included. Pending claims appear with their current state before the ticket is issued.
 
 Common status codes: `400` invalid month, audience, consent, or image; `401` missing/invalid admin session; `403` non-admin; `404` winner/claim not found; `409` current month, duplicate claim, missing email, or invalid claim state; `413` oversized image; `429` admin write rate limit; `503` SMTP or phone-encryption configuration missing/unavailable.
 

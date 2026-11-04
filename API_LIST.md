@@ -37,8 +37,8 @@ Public = token nahi chahiye. User = logged-in active user. Admin = logged-in use
 | POST | `/auth/google` | Public | Body: verified Google `idToken`. Backend token verify karke existing account sign in karta hai ya naya user account banata hai. Requires `GOOGLE_CLIENT_ID`. |
 | POST | `/auth/refresh` | Public | Body: `refreshToken`. Naya access token aur rotated refresh token deta hai. |
 | POST | `/auth/logout` | User | Session revoke karein; body required nahi. |
-| GET | `/auth/me` | User | Current user profile. |
-| PATCH | `/auth/me` | User | Profile fields update karein: optional `name`, `goal`, `heightCm` (50–300), `weightKg` (20–500), `birthDate` (`DD/MM/YYYY`). Email read-only hai. |
+| GET | `/auth/me` | User | Current user profile including saved contact `phone` for the signed-in user only. |
+| PATCH | `/auth/me` | User | Profile fields update karein: optional `name`, `goal`, `heightCm` (50–300), `weightKg` (20–500), `birthDate` (`DD/MM/YYYY`), `phone` (10–15 digits). Contact phone encrypted at rest; email read-only hai. |
 | PATCH | `/auth/me/goals` | User | Daily health goal save karein. Body: `metricType` (`steps`, `sleep`, `heart_rate`, `stress`) aur numeric `targetValue`. |
 | POST | `/auth/me/device` | User | Current account ke profile mein phone metadata save/update karein. Body: `deviceIdentifier`, `manufacturer`, `brand`, `model`, `platform`, `osVersion`, `appVersion`. Hardware serial/IMEI na bhejein. |
 
@@ -124,12 +124,13 @@ Sync se instant coins credit nahi hote. IST day complete hone ke baad worker set
 
 Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=2026-10-20`.
 
-## 5. Wallet, rewards aur redemptions — 5 APIs (User)
+## 5. Wallet, rewards aur redemptions — 6 APIs (User)
 
 | Method | Path | Kaam |
 |---|---|---|
 | GET | `/wallet` | Wallet balance, transactions aur `dailyActivity`. Embedded transactions maximum 100; older ledger ke liye `/activity/transactions`. |
 | GET | `/rewards` | Available reward catalogue. |
+| GET | `/rewards/leaderboard-tickets` | Signed-in user's monthly ticket rewards and image; group ticket is visible to the GL only. |
 | POST | `/rewards/:id/redeem` | Reward redeem karein; wallet points transactionally deduct hote hain aur partner ka ek unused voucher code milta hai. Body required nahi. |
 | GET | `/redemptions` | Apni redemption history. |
 | GET | `/redemptions/:id` | Ek apni redemption ki details. |
@@ -178,8 +179,8 @@ Yahan `:id` user ka **internal `id`** hai; `USR-...` wala permanent `publicId` l
 | GET | `/admin/ticket-rewards/leaderboard?month=YYYY-MM&audience=INDIVIDUAL|GROUP` | Completed month ke step rankings; group score current members ke totals ka sum hai. |
 | GET | `/admin/ticket-rewards/claims?month=YYYY-MM` | Monthly ticket claim history; consent state, winner snapshot, delivery status. |
 | POST | `/admin/ticket-rewards/claims` | First-place monthly winner ka claim banayein: `{"month":"2026-10","audience":"INDIVIDUAL","winnerId":"<id>"}`. |
-| POST | `/admin/ticket-rewards/claims/:id/consent` | User ki permission record karein: `{"confirmed":true,"method":"PHONE","phone":"+91..."}`. Phone encrypted at rest hota hai. |
-| POST | `/admin/ticket-rewards/claims/:id/send` | Consent ke baad manually booked ticket image email karein: `{ "image":"data:image/jpeg;base64,...", "filename":"ticket.jpg", "ticketCount":1, "bookingReference":"optional" }`. Image limit 5 MB. |
+| POST | `/admin/ticket-rewards/claims/:id/consent` | User ki permission record karein: `{"confirmed":true,"method":"PHONE"}`. Winner profile ka phone auto-use hota hai; optional `phone` override kar sakte hain. Phone encrypted at rest hai. |
+| POST | `/admin/ticket-rewards/claims/:id/send` | Consent ke baad ticket issue karein: `ticketDate` (`YYYY-MM-DD`), `ticketNumber`, `image`, optional `ticketCount`/`bookingReference`. Image email hoti hai aur encrypted form mein user app mein dekhne ke liye save hoti hai. |
 | GET | `/admin/users/:id` | Profile, wallet, record/device counts aur `canChangeStatus`. |
 | PATCH | `/admin/users/:id/status` | Body: `{"status":"ACTIVE"}` ya `{"status":"SUSPENDED"}`. Self/admin accounts ka status yahan change nahi hota. Status change existing sessions revoke karta hai. |
 | GET | `/admin/users/:id/steps` | Date-wise reported/counted steps; `page`, `limit`, `from`, `to`. |
