@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const env = require('../config/env');
 const { AppError } = require('../middleware/error.middleware');
 
-const uploadProfileImage = async (dataUri, userId) => {
+const uploadImage = async (dataUri, publicId, label) => {
   const { cloudName, apiKey, apiSecret, folder } = env.cloudinary;
   if (!cloudName || !apiKey || !apiSecret) {
     throw new AppError('Cloudinary is not configured. Set CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY, and CLOUDINARY_API_SECRET in backend/.env.', 503);
@@ -10,9 +10,8 @@ const uploadProfileImage = async (dataUri, userId) => {
   if (typeof dataUri !== 'string' || !/^data:image\/(jpeg|png|webp);base64,/.test(dataUri)) {
     throw new AppError('Provide a JPEG, PNG, or WebP image as a base64 data URI', 400);
   }
-  if (Buffer.byteLength(dataUri, 'utf8') > 6 * 1024 * 1024) throw new AppError('Profile image must be smaller than 4.5 MB', 413);
+  if (Buffer.byteLength(dataUri, 'utf8') > 6 * 1024 * 1024) throw new AppError(`${label} image must be smaller than 4.5 MB`, 413);
   const timestamp = Math.floor(Date.now() / 1000);
-  const publicId = `user-${String(userId).replace(/[^a-zA-Z0-9_-]/g, '')}`;
   const signatureParams = `folder=${folder}&overwrite=true&public_id=${publicId}&timestamp=${timestamp}`;
   const signature = crypto.createHash('sha1').update(signatureParams + apiSecret).digest('hex');
   const body = new URLSearchParams({
@@ -34,4 +33,8 @@ const uploadProfileImage = async (dataUri, userId) => {
   return { url: result.secure_url, publicId: result.public_id };
 };
 
-module.exports = { uploadProfileImage };
+const safeId = value => String(value).replace(/[^a-zA-Z0-9_-]/g, '');
+const uploadProfileImage = (dataUri, userId) => uploadImage(dataUri, `user-${safeId(userId)}`, 'Profile');
+const uploadGroupImage = (dataUri, groupId) => uploadImage(dataUri, `group-${safeId(groupId)}`, 'Group');
+
+module.exports = { uploadProfileImage, uploadGroupImage };

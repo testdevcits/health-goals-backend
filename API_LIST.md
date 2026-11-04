@@ -145,6 +145,7 @@ Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=
 | GET | `/community/users/search?q=...` | Active users ko name/public ID se dhoondein (max 10 results). |
 | POST | `/community/groups/:id/join` | Public group join karein; private groups mein GL invite karta hai. |
 | POST | `/community/groups/:id/members` | GL kisi active user ko add karein. Body: `{ "publicId": "USR-..." }`. |
+| PATCH | `/community/groups/:id` | GL group name/image update karein. Body mein `name` (3–50 chars) and/or `image` (JPEG/PNG/WebP base64 data URI, <4.5 MB) bhejein; `image: null` image remove karta hai. Response group mein `imageUrl` aata hai. |
 | POST | `/community/groups/:id/leave` | Group chhodein. GL leave kare to oldest member GL banega. |
 | GET | `/community/groups/:id/activity?day=YYYY-MM-DD` | Daily group totals aur har member ka activity count. |
 | GET | `/community/groups/leaderboard?day=YYYY-MM-DD` | Public groups ka daily steps leaderboard. |
@@ -174,6 +175,11 @@ Yahan `:id` user ka **internal `id`** hai; `USR-...` wala permanent `publicId` l
 | PATCH | `/admin/rewards/:id` | Reward details, stock, ya active state update karein. |
 | POST | `/admin/rewards/:id/vouchers` | Partner vouchers import karein: `{"codes":["CODE-1","CODE-2"],"expiresAt":"2030-12-31"}`; expiry optional, 1–500 codes, one-use assignment. Codes encrypted at rest. |
 | GET | `/admin/rewards/:id/vouchers` | Sirf available voucher count deta hai; codes expose nahi karta. |
+| GET | `/admin/ticket-rewards/leaderboard?month=YYYY-MM&audience=INDIVIDUAL|GROUP` | Completed month ke step rankings; group score current members ke totals ka sum hai. |
+| GET | `/admin/ticket-rewards/claims?month=YYYY-MM` | Monthly ticket claim history; consent state, winner snapshot, delivery status. |
+| POST | `/admin/ticket-rewards/claims` | First-place monthly winner ka claim banayein: `{"month":"2026-10","audience":"INDIVIDUAL","winnerId":"<id>"}`. |
+| POST | `/admin/ticket-rewards/claims/:id/consent` | User ki permission record karein: `{"confirmed":true,"method":"PHONE","phone":"+91..."}`. Phone encrypted at rest hota hai. |
+| POST | `/admin/ticket-rewards/claims/:id/send` | Consent ke baad manually booked ticket image email karein: `{ "image":"data:image/jpeg;base64,...", "filename":"ticket.jpg", "ticketCount":1, "bookingReference":"optional" }`. Image limit 5 MB. |
 | GET | `/admin/users/:id` | Profile, wallet, record/device counts aur `canChangeStatus`. |
 | PATCH | `/admin/users/:id/status` | Body: `{"status":"ACTIVE"}` ya `{"status":"SUSPENDED"}`. Self/admin accounts ka status yahan change nahi hota. Status change existing sessions revoke karta hai. |
 | GET | `/admin/users/:id/steps` | Date-wise reported/counted steps; `page`, `limit`, `from`, `to`. |

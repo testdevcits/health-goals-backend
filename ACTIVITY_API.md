@@ -418,6 +418,7 @@ Create payload:
 | `GET /community/groups/:id` | Read group details |
 | `POST /community/groups/:id/join` | Join a group |
 | `POST /community/groups/:id/members` | GL adds an active user by public ID |
+| `PATCH /community/groups/:id` | GL changes group name and/or uploads/removes group image |
 | `POST /community/groups/:id/leave` | Leave a group; GL role transfers to the longest-standing member |
 | `GET /community/groups/:id/activity?day=YYYY-MM-DD` | Group and per-member daily activity totals |
 | `GET /community/groups/:id/leaderboard` | Read its 7-day step leaderboard |
@@ -433,7 +434,38 @@ Group creation accepts; the group limit is fixed at 10 including the creator/GL.
 {"publicId":"USR-0123456789AB"}
 ```
 
-User search response data is `{ "users": [{"id":"<id>","name":"Asha","publicId":"USR-0123456789AB","profileImageUrl":null}] }`. Group creation returns `201` and `data.group`, for example `{ "id":"<group-id>","name":"Morning Walkers","private":false,"members":1,"maxMembers":10,"leaderId":"<user-id>","isLeader":true,"joined":true }`.
+User search response data is `{ "users": [{"id":"<id>","name":"Asha","publicId":"USR-0123456789AB","profileImageUrl":null}] }`. Group creation returns `201` and `data.group`, for example `{ "id":"<group-id>","name":"Morning Walkers","imageUrl":null,"private":false,"members":1,"maxMembers":10,"leaderId":"<user-id>","isLeader":true,"joined":true }`.
+
+Only the current GL may update group details. `PATCH /community/groups/:id` accepts `name` (3–50 characters), `image` (JPEG/PNG/WebP base64 data URI), or both. Send images smaller than 4.5 MB; the server uploads them to the configured Cloudinary account and stores the resulting secure URL. Set `image` to `null` to remove the current image. At least one field is required; unknown fields are rejected.
+
+```json
+{
+  "name": "Morning Walkers India",
+  "image": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ..."
+}
+```
+
+Success (`200`) response data:
+
+```json
+{
+  "group": {
+    "id": "<group-id>",
+    "name": "Morning Walkers India",
+    "imageUrl": "https://res.cloudinary.com/<cloud>/image/upload/...",
+    "emoji": "🏃",
+    "private": false,
+    "members": 4,
+    "maxMembers": 10,
+    "leaderId": "<user-id>",
+    "leaderName": "Asha",
+    "isLeader": true,
+    "joined": true
+  }
+}
+```
+
+Statuses: `200` updated, `400` invalid fields/name/image format, `401` unauthenticated, `403` caller is not the GL, `404` group not found, `413` image too large, `502` image upload failed, and `503` Cloudinary is not configured. Group list/detail responses include `imageUrl` (null until one is set); group activity and leaderboard entries also include it for display.
 
 Members leave with an empty request body. If the GL leaves, the earliest-joined remaining member becomes GL; if the GL is the only member, the group is deleted. Daily group activity uses Asia/Kolkata dates and includes an individual member total and group combined total. A member's activity counts individually and in every group they belong to. Admin sees all groups at `GET /admin/groups?day=YYYY-MM-DD`; this powers the admin **Groups** page. User-facing rankings include public groups; admin rankings also include private groups. The user group ranking is by daily steps. Existing Admin reward rules support group-audience leaderboard and badge outcomes.
 
@@ -478,6 +510,72 @@ For completeness, Android obtains and refreshes tokens using these routes (all a
 | `POST /auth/password/reset` | `{challengeId,otp,password}` | `200` |
 
 Register/login `202` response includes a `challengeId` and does not yet include an access token. Verify response supplies `accessToken` and `refreshToken`; persist them securely. Refresh rotates both tokens, so replace both stored values after each success. OTP/reset validation errors return `400`; credentials/token errors commonly return `401`; rate limits return `429`. Exact auth flow and token expiry details are also documented in `API_LIST.md`.
+
+## Admin monthly leaderboard ticket rewards
+
+This flow is in the existing Admin **Rewards** page under the **Leaderboard tickets** tab; **Coupons** remains the current reward catalogue and voucher-code flow. All routes below require an authenticated admin bearer token.
+
+### Monthly winner and claim flow
+
+1. Select a completed month (`YYYY-MM`) and audience (`INDIVIDUAL` or `GROUP`). Current and future months are rejected. The ranking is based on counted daily steps in Asia/Kolkata: each user's records for a day use the existing overlap/source de-duplication calculation, then daily totals are added for the month.
+2. The first-place winner can be made into a ticket claim. Individual rewards go to the user's registered email. A group reward is addressed to its GL's registered email. A group score sums each current member's monthly total; creating a claim saves the members and their totals as a claim-time audit snapshot.
+3. The admin records the winner's explicit permission to use the submitted phone number for manual booking and email the ticket image to the registered address. The claim saves the consent method, time, admin ID, terms version, and terms text. Phone numbers are encrypted at rest. The admin claim API can return the number so staff can complete the booking; the UI only shows it in this admin fulfillment view.
+4. After booking, the admin uploads a PNG/JPEG/WebP ticket image (up to 5 MB), optional booking reference, and ticket count. The server emails the image attachment to the winner and records recipient, send time, admin, ticket count, reference, filename, content type, and SHA-256 image digest. The original image is not retained by the application.
+
+There is no user-facing consent endpoint in this flow. The `confirmed` value is an admin attestation that the winner agreed through the selected method; it does not mean the app independently captured a user click. Do not mark it confirmed before permission is actually received. SMTP and `VOUCHER_ENCRYPTION_KEY` must be configured. MongoDB must be enabled for claims to survive backend restarts; memory mode is temporary.
+
+### API requests and responses
+
+`GET /api/v1/admin/ticket-rewards/leaderboard?month=2026-10&audience=INDIVIDUAL` returns:
+
+```json
+{
+  "month": "2026-10",
+  "audience": "INDIVIDUAL",
+  "items": [
+    { "id": "<user-id>", "name": "Asha", "email": "asha@example.com", "profileImageUrl": "", "steps": 142000, "rank": 1, "claimExists": false }
+  ]
+}
+```
+
+For `audience=GROUP`, each item has `id`, `name`, `imageUrl`, `leaderId`, `leaderName`, `leaderEmail`, `members` (each with `id`, `name`, `email`, `steps`, and `role`), `memberCount`, `steps`, `rank`, and `claimExists`.
+
+`GET /api/v1/admin/ticket-rewards/claims?month=2026-10` returns `{ "items": [<claim>] }`. Claim state is `CONSENT_PENDING`, `READY_TO_SEND`, or `SENT`. Consent details include `method`, `confirmedAt`, `confirmedBy`, `termsVersion`, `phoneLast4`, and the full phone for this admin-only endpoint. Delivery details are null until sent.
+
+Create the winner claim:
+
+```http
+POST /api/v1/admin/ticket-rewards/claims
+Content-Type: application/json
+
+{"month":"2026-10","audience":"INDIVIDUAL","winnerId":"<user-id>"}
+```
+
+Success is `201` with `{ "claim": <claim> }`. Only rank 1 can be claimed. A duplicate winner/month/audience claim returns `409`.
+
+Save consent before ticket sending:
+
+```http
+POST /api/v1/admin/ticket-rewards/claims/<claim-id>/consent
+Content-Type: application/json
+
+{"confirmed":true,"method":"PHONE","phone":"+91 98765 43210"}
+```
+
+`method` is `PHONE`, `EMAIL`, or `IN_PERSON`; `confirmed` must be `true`. Success is `200` with the updated claim. Phone must contain 10–15 digits after formatting is removed.
+
+Email a ticket after manual booking:
+
+```http
+POST /api/v1/admin/ticket-rewards/claims/<claim-id>/send
+Content-Type: application/json
+
+{"image":"data:image/jpeg;base64,<base64-data>","filename":"ticket.jpg","ticketCount":1,"bookingReference":"BOOK-123"}
+```
+
+`image` must be a PNG/JPEG/WebP data URI no larger than 5 MB when decoded; `filename` is optional, `ticketCount` is 1–10, and `bookingReference` is optional (max 120 chars). Success is `200` with the saved claim and delivery details. The request sends an email attachment to the winner's registered email. SMTP failure returns `503` and leaves the claim ready to retry.
+
+Common status codes: `400` invalid month, audience, consent, or image; `401` missing/invalid admin session; `403` non-admin; `404` winner/claim not found; `409` current month, duplicate claim, missing email, or invalid claim state; `413` oversized image; `429` admin write rate limit; `503` SMTP or phone-encryption configuration missing/unavailable.
 
 ## Audit: Android APIs not available
 
