@@ -39,5 +39,10 @@ const createAuditLog = async ({ userId = null, action, metadata = {}, requestId 
 
 module.exports = {
   AuditLog,
-  createAuditLog
+  createAuditLog,
+  listAuditLogs: async ({ userId, limit = 100 } = {}) => {
+    if (!env.useMongoDB) return auditLogs.filter(row => !userId || String(row.user_id) === String(userId)).slice(-limit).reverse();
+    const rows = await AuditLog.find(userId ? { userId } : {}).sort({ createdAt: -1 }).limit(limit).lean();
+    return rows.map(row => ({ id: String(row._id), userId: row.userId ? String(row.userId) : null, action: row.action, metadata: row.metadata || {}, createdAt: row.createdAt }));
+  }
 };

@@ -84,7 +84,7 @@ async function list(kind, params = {}) {
       .sort((a,b)=>new Date(b[config.time])-new Date(a[config.time]) || String(b.id).localeCompare(String(a.id)));
     total=rows.length;items=rows.slice((page-1)*limit,page*limit);
   }
-  if (kind === 'users') items = items.map(user => ({...user,isAdmin:env.adminEmails.includes(String(user.email||'').toLowerCase())}));
+  if (kind === 'users') items = items.map(user => ({...user,isAdmin:env.adminEmails.includes(String(user.email||'').toLowerCase()) || ['ADMIN','SUB_ADMIN'].includes(user.role)}));
   else items = await attachUsers(items);
   let deviceFilters;
   if (kind === 'devices') {

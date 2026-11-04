@@ -10,10 +10,61 @@ const audit = require('../models/audit.model');
 const partnerModel = require('../models/partner.model');
 const { successResponse } = require('../utils/response');
 const { authLimiter, adminWriteLimiter } = require('../middleware/rate-limit.middleware');
+const bcrypt = require('bcrypt');
 router.use(authenticate);
-router.use((req,res,next)=>env.adminEmails.includes(req.user.email.toLowerCase()) ? next() : next(new AppError('Admin access required',403)));
+router.use((req,res,next)=>{
+  const configuredAdmin=env.adminEmails.includes(req.user.email.toLowerCase());
+  req.adminRole=configuredAdmin?'ADMIN':req.user.role;
+  return ['ADMIN','SUB_ADMIN'].includes(req.adminRole) ? next() : next(new AppError('Admin access required',403));
+});
+const fullAdminOnly=(req,res,next)=>req.adminRole==='ADMIN'?next():next(new AppError('Only full administrators can manage this setting',403));
+const subAdminReadAllowed=req=>req.method==='GET' && (/^\/(overview|users|records|devices)(\/|$)/.test(req.path) || req.path==='/data-export');
+router.use((req,res,next)=>req.adminRole!=='SUB_ADMIN'||subAdminReadAllowed(req)||req.method==='POST'&&req.path==='/activity-import'?next():next(new AppError('Sub-admin access is limited to viewing, filtering, importing, and exporting user activity data',403)));
 const coinRules=require('../services/coin-rules.service');
 const rewardRules=require('../services/reward-rule.service');
+router.get('/administrators',fullAdminOnly,async(req,res,next)=>{try{
+  const items=await users.listAdministrators();
+  const activity=await audit.listAuditLogs({limit:250});
+  const byUser=new Map();
+  for(const row of activity){if(row.userId&&!byUser.has(String(row.userId)))byUser.set(String(row.userId),row);}
+  successResponse(res,200,'Administrators fetched',{items:items.map(item=>({...item,lastActivity:byUser.get(String(item.id))||null}))});
+}catch(error){next(error);}});
+router.get('/administrators/:id/activity',fullAdminOnly,async(req,res,next)=>{try{
+  const user=await users.findUserById(req.params.id);
+  if(!user||!['ADMIN','SUB_ADMIN'].includes(user.role))throw new AppError('Administrator not found',404);
+  successResponse(res,200,'Administrator activity fetched',{user,items:await audit.listAuditLogs({userId:user.id,limit:100})});
+}catch(error){next(error);}});
+router.post('/administrators',fullAdminOnly,adminWriteLimiter,async(req,res,next)=>{try{
+  const body=req.body||{};const name=String(body.name||'').trim();const email=String(body.email||'').trim().toLowerCase();const password=String(body.password||'');
+  if(name.length<2||name.length>120)throw new AppError('Name must be 2 to 120 characters',400);
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))throw new AppError('Enter a valid email address',400);
+  if(password.length<8||password.length>72)throw new AppError('Temporary password must be 8 to 72 characters',400);
+  if(await users.findUserByEmail(email))throw new AppError('This email already has an account',409);
+  const administrator=await users.createUser({name,email,passwordHash:await bcrypt.hash(password,12),role:'SUB_ADMIN'});
+  await audit.createAuditLog({userId:req.user.id,action:'ADMIN_SUB_ADMIN_CREATED',metadata:{administratorId:administrator.id,email},requestId:req.requestId});
+  successResponse(res,201,'Sub-admin created. They can use the same email OTP login.',{administrator});
+}catch(error){next(error);}});
+router.get('/data-export',async(req,res,next)=>{try{
+  const kind=['users','records','devices'].includes(req.query.kind)?req.query.kind:'records';
+  const result=await query.list(kind,{...req.query,page:1,limit:100});
+  const columns=kind==='users'?['name','email','publicId','status','role','createdAt']:kind==='devices'?['model','manufacturer','platform','status','lastSyncAt','user']:['metricType','value','unit','recordedAt','source','user'];
+  const quote=value=>`"${String(value??'').replace(/"/g,'""')}"`;
+  const csv=[columns.join(','),...result.items.map(row=>columns.map(column=>quote(column==='user'?(row.user?.email||row.user?.name||''):row[column])).join(','))].join('\n');
+  res.setHeader('Content-Type','text/csv; charset=utf-8');res.setHeader('Content-Disposition',`attachment; filename="health-${kind}.csv"`);res.status(200).send(csv);
+}catch(error){next(error);}});
+router.post('/activity-import',adminWriteLimiter,async(req,res,next)=>{try{
+  const items=Array.isArray(req.body?.items)?req.body.items:[];
+  if(!items.length||items.length>100)throw new AppError('Upload 1 to 100 activity rows at a time',400);
+  const allowed={steps:'count',workout:'min',meditation:'min',water_checkin:'checkin',sleep_checkin:'checkin'};const created=[];
+  for(let index=0;index<items.length;index++){
+    const row=items[index]||{};const user=await users.findUserById(String(row.userId||''));const metricType=String(row.metricType||'');const value=Number(row.value);const recordedAt=String(row.recordedAt||'');
+    if(!user||!allowed[metricType]||!Number.isFinite(value)||value<0||Number.isNaN(Date.parse(recordedAt)))throw new AppError(`Row ${index+1} is invalid`,400);
+    const result=await require('../services/health.service').createRecord(user.id,{metricType,value,unit:allowed[metricType],recordedAt,source:'admin_import',sourceRecordId:`import:${req.user.id}:${Date.now()}:${index}`,recordingMethod:'manual',dataOrigin:'admin.import',metadata:{importedBy:req.user.id}},req.requestId);
+    if(!result.duplicate)created.push(result.record);
+  }
+  await audit.createAuditLog({userId:req.user.id,action:'ADMIN_ACTIVITY_IMPORTED',metadata:{rows:items.length,created:created.length},requestId:req.requestId});
+  successResponse(res,201,'Activity import completed',{created:created.length});
+}catch(error){next(error);}});
 router.get('/groups',async(req,res,next)=>{try{successResponse(res,200,'Group activity overview',await require('../models/community.model').groupRankings(req.query.day,true));}catch(error){next(error);}});
 router.get('/ticket-rewards/leaderboard',async(req,res,next)=>{try{const month=req.query.month;const audience=String(req.query.audience||'INDIVIDUAL').toUpperCase();const items=await require('../services/ticket-reward.service').leaderboard(month,audience);const claims=await require('../models/ticket-claim.model').list({month});const claimed=new Set(claims.filter(row=>row.audience===audience).map(row=>row.winnerId));successResponse(res,200,'Monthly leaderboard winners',{month,audience,items:items.map(({phone,leaderPhone,...item})=>({...item,claimExists:claimed.has(item.id)}))});}catch(error){next(error);}});
 router.get('/ticket-rewards/claims',async(req,res,next)=>{try{const month=req.query.month;if(month&&!/^\d{4}-(0[1-9]|1[0-2])$/.test(month))throw new AppError('month must use YYYY-MM format',400);const items=await require('../models/ticket-claim.model').list({month});await Promise.all(items.filter(item=>!item.contactPhone&&item.recipientUserId).map(async item=>{item.contactPhone=(await users.findUserProfileById(item.recipientUserId))?.phone||'';}));successResponse(res,200,'Leaderboard ticket claim history',{items});}catch(error){next(error);}});
@@ -155,7 +206,7 @@ router.get('/users/:id',async(req,res,next)=>{
   try{
     const user=await findUser(req.params.id);
     const [points,records,devices]=await Promise.all([wallet.findWallet(user.id),query.list('records',{userId:user.id,limit:1}),query.list('devices',{userId:user.id,limit:1})]);
-    successResponse(res,200,'User details',{user,wallet:points,recordCount:records.total,deviceCount:devices.total,canChangeStatus:user.id!==req.user.id&&!env.adminEmails.includes(user.email.toLowerCase())});
+    successResponse(res,200,'User details',{user,wallet:points,recordCount:records.total,deviceCount:devices.total,canChangeStatus:req.adminRole==='ADMIN'&&user.id!==req.user.id&&!env.adminEmails.includes(user.email.toLowerCase())});
   }catch(error){next(error);}
 });
 router.get('/users/:id/record-chart',async(req,res,next)=>{try{const user=await findUser(req.params.id);successResponse(res,200,'All-date activity chart',await require('../services/record-chart.service').chart(user.id,req.query));}catch(error){next(error);}});

@@ -30,6 +30,7 @@ const normalizeEmail = (email) => {
   if (typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) throw new AppError('Valid email is required', 400);
   return email.trim().toLowerCase();
 };
+const publicAdminUser = user => ({ ...userModel.toPublicUser(user), role: env.adminEmails.includes(String(user.email || '').toLowerCase()) ? 'ADMIN' : user.role });
 const register = async ({ name, email, password, companyCode = '', goal = '', admin = false }) => {
   email = normalizeEmail(email);
   if (admin && !env.adminEmails.includes(email)) throw new AppError('This email is not approved for admin access', 403);
@@ -65,7 +66,7 @@ const login = async ({ identifier, userId, email, password, admin = false }) => 
     ? await userModel.findUserByPublicId(value.toUpperCase())
     : await userModel.findUserByEmail(normalizeEmail(value));
   if (!user || !await bcrypt.compare(password, user.password_hash)) throw new AppError('Invalid email, User ID or password', 401);
-  if (admin && !env.adminEmails.includes(user.email.toLowerCase())) throw new AppError('This email is not approved for admin access', 403);
+  if (admin && !env.adminEmails.includes(user.email.toLowerCase()) && !['ADMIN', 'SUB_ADMIN'].includes(user.role)) throw new AppError('This email is not approved for admin access', 403);
   if (user.status === 'SUSPENDED') throw new AppError('Account is suspended', 403);
   const challenge = await otpService.request({ email: user.email, purpose: 'login', payload: { userId: user.id } });
   const [local, domain] = user.email.split('@');
@@ -115,7 +116,7 @@ const loginWithGoogle = async ({ idToken }) => {
   if (!user || user.status !== 'ACTIVE') throw new AppError('Account unavailable', 403);
   await userModel.updateLastLogin(user.id);
   const tokens = await issueTokens(user);
-  return { user: userModel.toPublicUser(user), token: tokens.accessToken, ...tokens };
+  return { user: publicAdminUser(user), token: tokens.accessToken, ...tokens };
 };
 
 const verifyOtp = async ({ challengeId, otp }) => {
@@ -129,8 +130,9 @@ const verifyOtp = async ({ challengeId, otp }) => {
   }
   if (!user || user.status !== 'ACTIVE') throw new AppError('Account unavailable', 403);
   await userModel.updateLastLogin(user.id);
-  const tokens = await issueTokens(user);
-  return { user, token: tokens.accessToken, ...tokens };
+  const publicUser = publicAdminUser(user);
+  const tokens = await issueTokens(publicUser);
+  return { user: publicUser, token: tokens.accessToken, ...tokens };
 };
 
 const refresh = async ({ refreshToken }) => {
@@ -164,7 +166,7 @@ const refresh = async ({ refreshToken }) => {
     throw new AppError('Invalid refresh token', 401);
   }
 
-  const publicUser = userModel.toPublicUser(user);
+  const publicUser = publicAdminUser(user);
   const tokens = await issueTokens(publicUser, decoded.sessionExpiresAt, refreshTokenHash);
 
   return {

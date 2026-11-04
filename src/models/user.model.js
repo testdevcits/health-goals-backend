@@ -50,7 +50,7 @@ const userSchema = new mongoose.Schema(
     },
     role: {
       type: String,
-      enum: ['USER', 'ADMIN'],
+      enum: ['USER', 'ADMIN', 'SUB_ADMIN'],
       default: 'USER'
     },
     refreshTokenHash: {
@@ -227,6 +227,12 @@ module.exports = {
     return user ? toPublicUser(user) : null;
   },
   listUsers: async () => env.useMongoDB ? (await User.find().sort({ createdAt: -1 }).lean()).map(toPublicUser) : users.map(toPublicUser),
+  listAdministrators: async () => {
+    const rows = env.useMongoDB
+      ? await User.find({ $or: [{ role: { $in: ['ADMIN', 'SUB_ADMIN'] } }, { email: { $in: env.adminEmails } }] }).sort({ createdAt: -1 }).lean()
+      : users.filter(user => ['ADMIN', 'SUB_ADMIN'].includes(user.role) || env.adminEmails.includes(user.email));
+    return rows.map(row => ({ ...toPublicUser(row), role: env.adminEmails.includes(String(row.email).toLowerCase()) ? 'ADMIN' : row.role }));
+  },
   findUserProfileById: async (id) => {
     if (!env.useMongoDB) { const user=users.find(row=>row.id===id); return user?toProfileUser(user):null; }
     if (!mongoose.Types.ObjectId.isValid(id)) return null;
