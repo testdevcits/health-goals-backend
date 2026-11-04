@@ -84,11 +84,11 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 const startServer = async () => {
+  let httpServer;
+  let server;
   try {
     await connectDatabase();
-    settlementWorker.start();
-    rewardWorker.start();
-    const httpServer = http.createServer(app);
+    httpServer = http.createServer(app);
     const io = new Server(httpServer, {
       cors: { origin: corsOptions.origin, methods: ['GET', 'POST'] },
       serveClient: false,
@@ -96,17 +96,24 @@ const startServer = async () => {
     });
     setIo(io);
     attachChatGateway(io);
-    const server = httpServer.listen(env.port, () => {
-      console.log(`Health App backend running on port ${env.port}`);
+    await new Promise((resolve, reject) => {
+      server = httpServer.listen(env.port, () => {
+        console.log(`Health App backend running on port ${env.port}`);
+        resolve();
+      });
+      server.once('error', reject);
     });
-    server.on('error', async (error) => {
-      console.error('Failed to start server:', error.message);
-      await disconnectDatabase();
-      process.exit(1);
-    });
+    settlementWorker.start();
+    rewardWorker.start();
   } catch (error) {
-    console.error('Failed to start server:', error.message);
-    await disconnectDatabase();
+    console.error('Failed to start server:', error.code === 'EADDRINUSE'
+      ? `Port ${env.port} is already in use. Stop the process using it or set PORT to a free port.`
+      : error.message);
+    if (server?.listening) await new Promise(resolve => server.close(resolve));
+    if (httpServer?.listening) await new Promise(resolve => httpServer.close(resolve));
+    await settlementWorker.stop();
+    await rewardWorker.stop();
+    await disconnectDatabase().catch(() => {});
     process.exit(1);
   }
 };
