@@ -93,6 +93,8 @@ npm run dev
 
 ## API Endpoints
 
+For Android request payloads, response examples, authentication/OTP, Health Connect sync, daily points, wallet, rewards, devices, and community, see the [Android API Integration Guide](ACTIVITY_API.md). The concise endpoint catalog is in [API_LIST.md](API_LIST.md).
+
 - `GET /api/health`
 - `POST /api/v1/auth/register`
 - `POST /api/v1/auth/login`

@@ -1,10 +1,12 @@
-# Android activity and daily points API
+# Android API Integration Guide
 
-This document describes the Android-facing activity APIs implemented by this backend. Examples use JSON and assume the API is mounted at `/api/v1`. Replace `https://api.example.com` with the deployed API origin.
+This is the Android developer's end-to-end API contract for the user app: authentication, health sync, daily points, wallet, rewards, devices, and community. Examples use JSON and assume the API is mounted at `/api/v1`. Replace `https://api.example.com` with the deployed API origin.
+
+For a local backend on port 8000, Android Emulator uses `http://10.0.2.2:8000/api/v1`; a physical phone uses the computer's reachable LAN IP. Production builds must use the deployed HTTPS API origin. `GET /api/health` is a public server check and is outside the `/api/v1` prefix.
 
 ## Android integration flow
 
-1. Authenticate with the app's existing login/OTP flow and retain the returned access token securely. Use the token as a bearer token on every authenticated request.
+1. Register or log in, verify the emailed OTP, then retain `accessToken` and `refreshToken` securely (Android Keystore-backed storage recommended). Use the access token as a bearer token on every authenticated request.
 2. Request Health Connect permissions in Android. The backend does not read Health Connect, request Android permissions, or infer missing data.
 3. Read permitted Health Connect records and the app's own workout/meditation/check-in events. Normalize units and timestamps before upload. Use UTC ISO-8601 timestamps with `Z` or an explicit offset.
 4. Assign each source record a stable `sourceRecordId`; keep it unchanged on retries. When correcting a record, increase `sourceVersion`.
@@ -21,7 +23,45 @@ Content-Type: application/json
 Accept: application/json
 ```
 
-The auth endpoints are mounted at `/auth`. Login/OTP request formats and token expiry are defined by the app's authentication API; after obtaining an access token, activity endpoints below require it. Missing/invalid/expired credentials normally return `401`.
+The auth endpoints are mounted at `/auth`. Access tokens last at most 15 minutes; the fixed session and refresh token expire after one hour. Refresh rotates both tokens and does not extend the session. Replace both saved tokens after every successful refresh. When refresh fails with `401`, send the user through login and OTP again.
+
+### Authentication request and response examples
+
+Register with `POST /auth/register`:
+
+```json
+{"name":"Asha Kumar","email":"asha@example.com","password":"password123","goal":"Walk daily"}
+```
+
+Login with `POST /auth/login` (email or permanent `USR-...` public ID):
+
+```json
+{"identifier":"asha@example.com","password":"password123"}
+```
+
+Both return `202` and a challenge, not tokens:
+
+```json
+{"success":true,"message":"Verification code sent to your email","data":{"requiresOtp":true,"challengeId":"<challenge-id>","expiresIn":300,"resendAfter":60,"maskedEmail":"a***@example.com"}}
+```
+
+Verify with `POST /auth/verify-otp`:
+
+```json
+{"challengeId":"<challenge-id>","otp":"123456"}
+```
+
+Success data includes `user`, `accessToken`, `refreshToken`, `sessionExpiresAt`, and `accessTokenExpiresAt`. The `token` field is an access-token alias. Expiry values are Unix epoch milliseconds. `123456` works only when the backend is configured in development OTP mode; in live mode use the code received by email. Repeat the original register/login request after the resend cooldown to request a new code.
+
+Refresh with `POST /auth/refresh`:
+
+```json
+{"refreshToken":"<saved-refresh-token>"}
+```
+
+Success data contains the same token and expiry fields; persist both newly returned tokens. Logout uses `POST /auth/logout` with the bearer token and no body. Other auth calls: `POST /auth/password/forgot` takes `{ "email": "..." }`; `POST /auth/password/reset` takes `{ "challengeId": "...", "otp": "...", "password": "new-password-123" }`; optional Google sign-in `POST /auth/google` takes `{ "idToken": "<google-id-token>" }` and requires server configuration.
+
+Auth status notes: `202` challenge/reset accepted; `400` invalid fields/OTP; `401` wrong password or invalid/expired token; `403` suspended or forbidden account; `409` duplicate email; `429` rate limited; `503` OTP email or Google sign-in not configured.
 
 ## Standard response envelope
 
@@ -411,6 +451,7 @@ Create payload:
 
 | Method and path | Purpose |
 |---|---|
+| `GET /community/feed` | Read the signed-in user's community feed |
 | `GET /community/groups` | List joined groups |
 | `GET /community/groups/discover` | List public groups available to discover |
 | `GET /community/users/search?q=...` | Find active users by name or public ID to add to a group (up to 10 results) |
@@ -424,7 +465,7 @@ Create payload:
 | `GET /community/groups/:id/leaderboard` | Read its 7-day step leaderboard |
 | `GET /community/groups/leaderboard?day=YYYY-MM-DD` | Public group daily rankings by steps |
 
-Group creation accepts; the group limit is fixed at 10 including the creator/GL. The client cannot choose another limit. Creator is automatically the first member and GL. Public groups allow self-join; private groups can only be joined when their GL adds the user. GL adds a user with their public ID:
+Group creation accepts the following body; the group limit is fixed at 10 including the creator/GL. The client cannot choose another limit. Creator is automatically the first member and GL. Public groups allow self-join; private groups can only be joined when their GL adds the user. GL adds a user with their public ID:
 
 ```json
 {"name":"Morning Walkers","description":"Daily walking group","emoji":"🏃","private":false}
