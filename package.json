@@ -9,7 +9,8 @@
     "dev": "nodemon src/server.js",
     "test": "node --test test/*.test.js",
     "db:seed:demo": "node scripts/seed-demo-user.js",
-    "db:seed:reward-rules": "node scripts/seed-reward-rules.js"
+    "db:seed:reward-rules": "node scripts/seed-reward-rules.js",
+    "db:seed:ticket-fixture": "node scripts/seed-leaderboard-ticket-fixture.js"
   },
   "keywords": [
     "health",

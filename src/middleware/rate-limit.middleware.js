@@ -1,4 +1,5 @@
 const rateLimit = require('express-rate-limit');
+const env = require('../config/env');
 
 const createLimiter = ({ windowMs, max, message }) =>
   rateLimit({
@@ -6,6 +7,9 @@ const createLimiter = ({ windowMs, max, message }) =>
     max,
     standardHeaders: true,
     legacyHeaders: false,
+    // Automated frontend reloads and fixed-OTP checks can legitimately exceed
+    // the production threshold during local development.
+    skip: () => env.appMode === 'dev',
     message: {
       success: false,
       error: {
