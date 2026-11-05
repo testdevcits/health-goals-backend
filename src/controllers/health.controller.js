@@ -26,6 +26,13 @@ const syncRecords = async (req, res, next) => {
   }
 };
 
+const syncDailySteps = async (req, res, next) => {
+  try {
+    const result = await healthService.syncDailySteps(req.user.id, req.body);
+    return successResponse(res, result.updated ? 200 : 201, 'Daily steps synced successfully', result);
+  } catch (error) { next(error); }
+};
+
 const getRecords = async (req, res, next) => {
   try {
     const records = await healthService.getRecords(req.user.id, {
@@ -66,6 +73,7 @@ module.exports = {
   serverHealth,
   createRecord,
   syncRecords,
+  syncDailySteps,
   getRecords,
   getHistory,
   getSummary,

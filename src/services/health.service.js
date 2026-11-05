@@ -1,6 +1,7 @@
 const healthModel = require('../models/health.model');
 const deviceModel = require('../models/device.model');
 const ingestion = require('./activity-ingestion.service');
+const { dayKey, dayEnd } = require('./daily-rules');
 const { AppError } = require('../middleware/error.middleware');
 const env = require('../config/env');
 const { DailyActivity, memoryDays } = require('../models/daily-activity.model');
@@ -136,6 +137,51 @@ const syncRecords = async (userId, payload, requestId = null) => {
   };
 };
 
+// Compact Health Connect contract: one cumulative step total per local day
+// and data origin. Replacing the same key makes retries idempotent and avoids
+// uploading every Health Connect interval.
+const syncDailySteps = async (userId, payload) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new AppError('A daily steps object is required', 400);
+  const { date, steps, dataOrigin, deviceId } = payload;
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(+new Date(`${date}T00:00:00+05:30`)) || dayKey(new Date(`${date}T00:00:00+05:30`)) !== date) throw new AppError('date must be a valid YYYY-MM-DD Asia/Kolkata date', 400);
+  if (!Number.isSafeInteger(steps) || steps < 0 || steps > 200000) throw new AppError('steps must be an integer from 0 to 200000', 400);
+  if (typeof dataOrigin !== 'string' || !dataOrigin.trim() || dataOrigin.length > 200) throw new AppError('dataOrigin is required (max 200 characters)', 400);
+  if (payload.recordingMethod !== undefined && !['automatic', 'active'].includes(payload.recordingMethod)) throw new AppError('recordingMethod must be automatic or active', 400);
+  if (deviceId !== undefined && (typeof deviceId !== 'string' || !deviceId.trim() || deviceId.length > 200)) throw new AppError('Invalid deviceId', 400);
+  if (deviceId && !(await deviceModel.userOwnsDevice(userId, deviceId))) throw new AppError('Device is not registered for this user', 403);
+
+  const startTime = new Date(`${date}T00:00:00+05:30`);
+  const endTime = dayEnd(date);
+  if (+startTime > Date.now()) throw new AppError('Cannot sync steps for a future date', 400);
+  const sourceRecordId = `daily-steps:${date}:${dataOrigin}`.slice(0, 256);
+  const existing = await healthModel.findBySourceRecord(userId, 'health_connect', sourceRecordId);
+  const sourceVersion = existing ? (existing.sourceVersion || 1) + 1 : 1;
+  const record = {
+    metricType: 'steps', value: steps, unit: 'count', recordedAt: startTime.toISOString(),
+    startTime: startTime.toISOString(), endTime: endTime.toISOString(), source: 'health_connect',
+    sourceRecordId, sourceVersion, dataOrigin: dataOrigin.trim(),
+    recordingMethod: payload.recordingMethod || 'automatic',
+    ...(deviceId ? { deviceId } : {}), metadata: { aggregation: 'daily_total' }
+  };
+  const result = await ingestion.ingest(userId, record);
+  // Daily totals have a full-day interval. Replace the interim record's end
+  // with the stable local midnight boundary so repeated syncs update cleanly.
+  if (result.updated && env.useMongoDB) {
+    await healthModel.HealthRecord.updateOne(
+      { userId, source: 'health_connect', sourceRecordId },
+      { $set: { endTime, startTime, recordedAt: startTime } }
+    );
+    result.record = { ...result.record, startTime, endTime, recordedAt: startTime };
+  } else if (result.updated && !env.useMongoDB) {
+    const row = healthModel.healthRecords.find(item => item.user_id === userId && item.source === 'health_connect' && item.source_record_id === sourceRecordId);
+    if (row) Object.assign(row, { startTime, endTime, recorded_at: startTime.toISOString() });
+    result.record = { ...result.record, startTime, endTime, recordedAt: startTime };
+  }
+  if (deviceId) await deviceModel.touchDeviceSync(userId, deviceId);
+  try { await require('./reward-engine.service').evaluate(); } catch (error) { console.error('Reward evaluation queued for retry:', error.code || error.name); }
+  return { date, steps, updated: Boolean(result.updated), duplicate: Boolean(result.duplicate), record: result.record };
+};
+
 const getRecords = async (userId, filters = {}) => {
   if (filters.metricType) {
     validateMetricType(filters.metricType);
@@ -167,6 +213,7 @@ const getSummary = async (userId) => {
 module.exports = {
   allowedMetricTypes,
   syncRecords,
+  syncDailySteps,
   createRecord,
   getRecords,
   getDailyHistory,

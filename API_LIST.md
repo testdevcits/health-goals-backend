@@ -82,6 +82,7 @@ Registration example:
 |---|---|---|
 | POST | `/health/records` | Ek health record save/update karein. Neeche payload dekhein. New record `201`, duplicate `200`. |
 | POST | `/health/sync` | Batch upload: `{"records":[...]}`; 1–100 records per request. |
+| POST | `/health/steps/daily` | Compact Health Connect daily total: `{"date":"YYYY-MM-DD","steps":6420,"dataOrigin":"...","recordingMethod":"automatic","deviceId":"..."}`. Replaces that origin's total for the day; safe to retry. |
 | GET | `/health/records` | Apne records; optional `metricType`. Is endpoint par pagination/date filters implemented nahi hain; paginated list ke liye `/activity/records` use karein. |
 | GET | `/health/history` | Daily aggregated metric history; `metricType`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD` required. |
 | GET | `/health/summary` | Health metrics ka summary. |
@@ -108,6 +109,10 @@ Record ke required fields: `metricType`, `value`, `unit`, `recordedAt`, `source`
 Supported metrics: `steps`, `workout`, `meditation`, `water_checkin`, `sleep_checkin`, `running`, `walking`, `heart_rate`, `sleep`, `oxygen_saturation`, `weight`, `blood_pressure`, `calories`, `distance`, `active_minutes`.
 
 `/health/sync` identifies each record by `(userId, source, sourceRecordId)`. Re-sending the same record with the same or lower `sourceVersion` is a duplicate; a higher version updates that existing record, and the response counts it under `updated` rather than `created`. After a successful sync batch, the backend removes that user's `health_connect` records older than the rolling 7-day window (`recordedAt < now - 168 hours`). Other record sources are not pruned. Records needed by a pending daily-points settlement are kept until settlement completes. This cleanup runs on sync requests; it is not a scheduled job.
+
+`POST /health/steps/daily` accepts one JSON object, not a `records` array. Required fields: `date` (Asia/Kolkata `YYYY-MM-DD`), integer `steps` (0–200000), and `dataOrigin`; optional `recordingMethod` (`automatic` or `active`) and registered `deviceId`. It stores one daily steps record per user, date, and origin. Repeating the call replaces that origin's previous daily total, rather than adding it, and queues normal daily settlement. Android must call this endpoint explicitly to use the compact format; `/health/sync` continues to accept detailed records. This backend cannot aggregate Health Connect data until the device sends the daily total; Android owns Health Connect reads and sync scheduling.
+
+To reduce traffic for detailed metrics, Android should persist the last successful sync watermark and request/send only records modified after it, retaining stable `sourceRecordId` and `sourceVersion` for corrections. The backend deduplicates/revises records by those fields but does not currently provide a Health Connect change-token endpoint.
 
 The sync response includes `total`, `created`, `updated`, `duplicates`, `pruned`, `rewards`, and `records`.
 
