@@ -164,7 +164,7 @@ const syncDailySteps = async (userId, payload) => {
   if (deviceId && !(await deviceModel.userOwnsDevice(userId, deviceId))) throw new AppError('Device is not registered for this user', 403);
 
   const startTime = new Date(`${date}T00:00:00+05:30`);
-  const endTime = dayEnd(date);
+  const endTime = new Date(Math.max(+startTime + 1, Math.min(+dayEnd(date), Date.now())));
   if (+startTime > Date.now()) throw new AppError('Cannot sync steps for a future date', 400);
   const sourceRecordId = `daily-steps:${date}:${dataOrigin}`.slice(0, 256);
   const existing = await healthModel.findBySourceRecord(userId, 'health_connect', sourceRecordId);
@@ -177,19 +177,6 @@ const syncDailySteps = async (userId, payload) => {
     ...(deviceId ? { deviceId } : {}), metadata: { aggregation: 'daily_total' }
   };
   const result = await ingestion.ingest(userId, record);
-  // Daily totals have a full-day interval. Replace the interim record's end
-  // with the stable local midnight boundary so repeated syncs update cleanly.
-  if (result.updated && env.useMongoDB) {
-    await healthModel.HealthRecord.updateOne(
-      { userId, source: 'health_connect', sourceRecordId },
-      { $set: { endTime, startTime, recordedAt: startTime } }
-    );
-    result.record = { ...result.record, startTime, endTime, recordedAt: startTime };
-  } else if (result.updated && !env.useMongoDB) {
-    const row = healthModel.healthRecords.find(item => item.user_id === userId && item.source === 'health_connect' && item.source_record_id === sourceRecordId);
-    if (row) Object.assign(row, { startTime, endTime, recorded_at: startTime.toISOString() });
-    result.record = { ...result.record, startTime, endTime, recordedAt: startTime };
-  }
   if (deviceId) await deviceModel.touchDeviceSync(userId, deviceId);
   try { await require('./reward-engine.service').evaluate(); } catch (error) { console.error('Reward evaluation queued for retry:', error.code || error.name); }
   return { date, steps, updated: Boolean(result.updated), duplicate: Boolean(result.duplicate), record: result.record };
