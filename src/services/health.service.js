@@ -4,6 +4,7 @@ const ingestion = require('./activity-ingestion.service');
 const { dayKey, dayEnd } = require('./daily-rules');
 const { AppError } = require('../middleware/error.middleware');
 const env = require('../config/env');
+const mongoose = require('mongoose');
 const { DailyActivity, memoryDays } = require('../models/daily-activity.model');
 
 const allowedMetricTypes = new Set([
@@ -85,20 +86,25 @@ const validateHealthRecord = (payload) => {
   }
 };
 
-const createRecord = async (userId, payload, requestId = null) => {
+const createRecord = async (userId, payload, requestId = null, options = {}) => {
   validateHealthRecord(payload);
 
   if (payload.deviceId) {
-    const ownsDevice = await deviceModel.userOwnsDevice(userId, payload.deviceId);
-    if (!ownsDevice) {
-      throw new AppError('Device is not registered for this user', 403);
+    if (!options.validatedDeviceIds?.has(payload.deviceId)) {
+      const ownsDevice = await deviceModel.userOwnsDevice(userId, payload.deviceId);
+      if (!ownsDevice) {
+        throw new AppError('Device is not registered for this user', 403);
+      }
+      options.validatedDeviceIds?.add(payload.deviceId);
     }
   }
 
   const result = await ingestion.ingest(userId, payload);
-  await deviceModel.touchDeviceSync(userId, payload.deviceId);
+  if (options.touchDevice !== false) await deviceModel.touchDeviceSync(userId, payload.deviceId);
   // Ingestion remains successful if reward evaluation needs a worker retry.
-  try{await require('./reward-engine.service').evaluate();}catch(error){console.error('Reward evaluation queued for retry:',error.code||error.name);}
+  if (options.evaluateRewards !== false) {
+    try{await require('./reward-engine.service').evaluate();}catch(error){console.error('Reward evaluation queued for retry:',error.code||error.name);}
+  }
   return result;
 };
 
@@ -111,11 +117,12 @@ const syncRecords = async (userId, payload, requestId = null) => {
     throw new AppError('Cannot sync more than 100 records at once', 400);
   }
 
-  const results = [];
+  const deviceIds = new Set();
   for (const [index, recordPayload] of payload.records.entries()) {
     try {
-      const result = await createRecord(userId, recordPayload, requestId);
-      results.push(result);
+      validateHealthRecord(recordPayload);
+      ingestion.extraFields(recordPayload);
+      if (recordPayload.deviceId) deviceIds.add(recordPayload.deviceId);
     } catch (error) {
       // Identify the failing batch item without echoing health values or
       // timestamps back in the error response.
@@ -129,6 +136,39 @@ const syncRecords = async (userId, payload, requestId = null) => {
       throw error;
     }
   }
+
+  for (const deviceId of deviceIds) {
+    if (!(await deviceModel.userOwnsDevice(userId, deviceId))) {
+      throw new AppError('Device is not registered for this user', 403);
+    }
+  }
+
+  const ingestBatch = async session => {
+    const results = [];
+    for (const [index, recordPayload] of payload.records.entries()) {
+      try {
+        results.push(await ingestion.ingest(userId, recordPayload, session));
+      } catch (error) {
+        error.details = {
+          ...(error.details && typeof error.details === 'object' ? error.details : {}),
+          recordIndex: index,
+          metricType: recordPayload?.metricType || null,
+          hasStartTime: Boolean(recordPayload?.startTime),
+          hasEndTime: Boolean(recordPayload?.endTime)
+        };
+        throw error;
+      }
+    }
+    return results;
+  };
+  const results = env.useMongoDB
+    ? await mongoose.connection.transaction(ingestBatch)
+    : await ingestBatch(null);
+  for (const deviceId of deviceIds) await deviceModel.touchDeviceSync(userId, deviceId);
+  // Rules evaluation scans competitions and their activity data; do this once
+  // after the whole batch instead of once for every record.
+  try { await require('./reward-engine.service').evaluate(); }
+  catch (error) { console.error('Reward evaluation queued for retry:', error.code || error.name); }
 
   // Keep the same rolling window read by Android. Prune only Health Connect
   // imports so manually entered or other-source health records are preserved.
@@ -146,7 +186,7 @@ const syncRecords = async (userId, payload, requestId = null) => {
     duplicates: results.filter((item) => item.duplicate).length,
     pruned,
     rewards: results.flatMap((item) => item.rewards),
-    records: results.map((item) => item.record)
+    ...(payload.includeRecords === false ? {} : { records: results.map((item) => item.record) })
   };
 };
 

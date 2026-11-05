@@ -28,7 +28,7 @@ function extraFields(payload){
  if(['water_checkin','sleep_checkin'].includes(payload.metricType)&&(Number(payload.value)!==1||payload.unit!=='checkin'))throw new AppError('Habit check-ins require value 1 and unit checkin',400);
  return extra;
 }
-async function ingest(userId,payload){
+async function ingest(userId,payload,existingSession=null){
  const extra=extraFields(payload);
  const run=async session=>{
   const existing=env.useMongoDB?await health.HealthRecord.findOne({userId,source:payload.source,sourceRecordId:payload.sourceRecordId}).session(session):await health.findBySourceRecord(userId,payload.source,payload.sourceRecordId);
@@ -46,6 +46,7 @@ async function ingest(userId,payload){
   return {record,duplicate:false,rewards:[],settlementPending:true};
  };
  // Retry insert races once; the winning record is then found as a duplicate.
+ if(existingSession)return run(existingSession);
  try{return env.useMongoDB?await mongoose.connection.transaction(run):await run(null);}
  catch(error){if(error.code===11000)return env.useMongoDB?mongoose.connection.transaction(run):run(null);throw error;}
 }

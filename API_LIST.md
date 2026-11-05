@@ -81,7 +81,7 @@ Registration example:
 | Method | Path | Kaam / input |
 |---|---|---|
 | POST | `/health/records` | Ek health record save/update karein. Neeche payload dekhein. New record `201`, duplicate `200`. |
-| POST | `/health/sync` | Batch upload: `{"records":[...]}`; 1–100 records per request. |
+| POST | `/health/sync` | Batch upload: `{"records":[...]}`; 1–100 records per request. Optional `includeRecords:false` returns counts only to reduce response size. |
 | POST | `/health/steps/daily` | Compact Health Connect daily total: `{"date":"YYYY-MM-DD","steps":6420,"dataOrigin":"...","recordingMethod":"automatic","deviceId":"..."}`. Replaces that origin's total for the day; safe to retry. |
 | GET | `/health/records` | Apne records; optional `metricType`. Is endpoint par pagination/date filters implemented nahi hain; paginated list ke liye `/activity/records` use karein. |
 | GET | `/health/history` | Daily aggregated metric history; `metricType`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD` required. |
