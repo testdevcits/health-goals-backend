@@ -15,7 +15,7 @@ function extraFields(payload){
  if(extra.recordingMethod&&!['automatic','active','manual'].includes(extra.recordingMethod))throw new AppError('Invalid recordingMethod',400);
  if(payload.startTime||payload.endTime){
   const start=new Date(payload.startTime),end=new Date(payload.endTime);
-  if(!payload.startTime||!payload.endTime||!Number.isFinite(+start)||!Number.isFinite(+end)||end<=start||end>Date.now()+300000)throw new AppError('Valid startTime and endTime are required',400);
+  if(!payload.startTime||!payload.endTime||!Number.isFinite(+start)||!Number.isFinite(+end)||end<=start||end>Date.now()+300000)throw new AppError('Valid startTime and endTime are required',400,{hasStartTime:Boolean(payload.startTime),hasEndTime:Boolean(payload.endTime),validStartTime:Number.isFinite(+start),validEndTime:Number.isFinite(+end),endAfterStart:Number.isFinite(+start)&&Number.isFinite(+end)?end>start:false});
   if(dayKey(start)!==dayKey(new Date(+end-1)))throw new AppError('Split activity intervals at midnight Asia/Kolkata before syncing',400);
   if(dayKey(payload.recordedAt)!==dayKey(start))throw new AppError('recordedAt must belong to the activity day',400);
   extra.startTime=start;extra.endTime=end;

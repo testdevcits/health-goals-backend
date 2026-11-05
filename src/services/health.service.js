@@ -112,9 +112,22 @@ const syncRecords = async (userId, payload, requestId = null) => {
   }
 
   const results = [];
-  for (const recordPayload of payload.records) {
-    const result = await createRecord(userId, recordPayload, requestId);
-    results.push(result);
+  for (const [index, recordPayload] of payload.records.entries()) {
+    try {
+      const result = await createRecord(userId, recordPayload, requestId);
+      results.push(result);
+    } catch (error) {
+      // Identify the failing batch item without echoing health values or
+      // timestamps back in the error response.
+      error.details = {
+        ...(error.details && typeof error.details === 'object' ? error.details : {}),
+        recordIndex: index,
+        metricType: recordPayload?.metricType || null,
+        hasStartTime: Boolean(recordPayload?.startTime),
+        hasEndTime: Boolean(recordPayload?.endTime)
+      };
+      throw error;
+    }
   }
 
   // Keep the same rolling window read by Android. Prune only Health Connect
