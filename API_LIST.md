@@ -278,7 +278,7 @@ Source: current backend route/controller/service implementation. The versioned A
 - User: `GET /api/v1/community/challenges`, `GET /api/v1/community/challenges/:id`, and `POST /api/v1/community/challenges/:id/join`.
 - User notifications: `GET /api/v1/notifications`, `PATCH /api/v1/notifications/:id/read`, and `PATCH /api/v1/notifications/read-all`.
 - Challenge metrics: `STEPS`, `WORKOUT_MINUTES`, `ACTIVE_MINUTES`; month uses `YYYY-MM` and Asia/Kolkata boundaries. Winners are top N or every participant meeting target. Ties share rank, winner points use idempotent wallet transactions, and final records are saved on completion.
-- `/api/cron/challenges` finalizes challenges whose month has ended. Protect it with `Authorization: Bearer $CRON_SECRET`; Vercel invokes it every 15 minutes.
+- `/api/cron/challenges` finalizes challenges whose month has ended. Protect it with `Authorization: Bearer $CRON_SECRET`; Vercel Hobby invokes it once daily at 18:45 UTC (00:15 Asia/Kolkata). A challenge's final result can therefore take up to about 24 hours after month end; an admin can call the finalize endpoint after the challenge ends for immediate processing.
 # Partner integration
 
 - Admin: `GET/POST /api/v1/admin/partners`; `PATCH /api/v1/admin/partners/:id` manages partner records and approval status.

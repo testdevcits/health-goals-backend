@@ -12,7 +12,7 @@
     },
     {
       "path": "/api/cron/challenges",
-      "schedule": "*/15 * * * *"
+      "schedule": "45 18 * * *"
     }
   ]
 }
