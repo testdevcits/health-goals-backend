@@ -19,7 +19,7 @@ const errorHandler = (err, req, res, next) => {
   const details = err.details || null;
 
   if (!err.isOperational) {
-    console.error(err);
+    console.error('Request failed', { name: err.name, code: err.code, requestId: req.requestId });
   }
 
   return errorResponse(res, statusCode, message, details);

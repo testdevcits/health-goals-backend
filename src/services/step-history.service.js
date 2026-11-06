@@ -5,10 +5,10 @@ const {buildQuery}=require('./admin-query.service');
 const {dayKey,dayEnd,calculate}=require('./daily-rules');
 const {DailyActivity}=require('../models/daily-activity.model');
 async function history(userId,params={}){
- const {page,limit}=buildQuery('records',params);
+ const {page,limit,query}=buildQuery('records',params);
  let days,total,records,settlements=[];
  if(env.useMongoDB){
-  const match={userId:new mongoose.Types.ObjectId(userId),metricType:'steps',deleted:{$ne:true}};
+  const match={userId:new mongoose.Types.ObjectId(userId),metricType:'steps',deleted:{$ne:true},...(query.recordedAt?{recordedAt:query.recordedAt}:{})};
   const dayFilter={};if(params.from)dayFilter.$gte=params.from;if(params.to)dayFilter.$lte=params.to;
   const [result]=await health.HealthRecord.aggregate([{$match:match},{$project:{value:1,day:{$ifNull:['$activityDate',{$dateToString:{date:'$recordedAt',format:'%Y-%m-%d',timezone:'Asia/Kolkata'}}]}}},...(Object.keys(dayFilter).length?[{$match:{day:dayFilter}}]:[]),{$group:{_id:'$day',reportedSteps:{$sum:'$value'},recordCount:{$sum:1}}},{$sort:{_id:-1}},{$facet:{items:[{$skip:(page-1)*limit},{$limit:limit}],total:[{$count:'count'}]}}]);
   days=result.items.map(r=>({day:r._id,reportedSteps:r.reportedSteps,recordCount:r.recordCount}));total=result.total[0]?.count||0;

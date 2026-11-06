@@ -35,10 +35,8 @@ const syncDailySteps = async (req, res, next) => {
 
 const getRecords = async (req, res, next) => {
   try {
-    const records = await healthService.getRecords(req.user.id, {
-      metricType: req.query.metricType
-    });
-    return successResponse(res, 200, 'Health records fetched successfully', { records });
+    const result = await healthService.getRecordsPage(req.user.id, req.query);
+    return successResponse(res, 200, 'Health records fetched successfully', result);
   } catch (error) {
     next(error);
   }

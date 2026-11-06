@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const env = require('../config/env');
 const crypto = require('crypto');
+const { TOTAL_METRICS, sampleWeight, mongoSampleWeight } = require('../services/health-metrics');
 
 const healthRecordSchema = new mongoose.Schema(
   {
@@ -57,7 +58,7 @@ const healthRecordSchema = new mongoose.Schema(
 );
 
 healthRecordSchema.index({ userId: 1, recordedAt: -1 });
-healthRecordSchema.index({ userId: 1, metricType: 1 });
+healthRecordSchema.index({ userId: 1, metricType: 1, recordedAt: -1, _id: -1 });
 healthRecordSchema.index({ userId: 1, source: 1, sourceRecordId: 1 }, { unique: true });
 
 healthRecordSchema.index({ recordedAt: -1, _id: -1 });
@@ -65,6 +66,7 @@ healthRecordSchema.index({ metricType: 1, recordedAt: -1, _id: -1 });
 healthRecordSchema.index({ userId: 1, recordedAt: -1, _id: -1 });
 healthRecordSchema.index({ createdAt: -1 });
 healthRecordSchema.index({ userId: 1, activityDate: 1, deleted: 1 });
+healthRecordSchema.index({ userId: 1, metricType: 1, activityDate: 1, deleted: 1 });
 const HealthRecord = mongoose.model('HealthRecord', healthRecordSchema);
 const healthRecords = [];
 
@@ -171,16 +173,16 @@ const getHealthRecordsByUserId = async (userId, filters = {}) => {
   const to = filters.to ? new Date(filters.to) : null;
   if (!env.useMongoDB) {
     return healthRecords
-      .filter((record) => record.user_id === userId)
+      .filter((record) => record.user_id === userId && !record.deleted)
       .filter((record) => !filters.metricType || record.metric_type === filters.metricType)
       .filter((record) => !from || new Date(record.recorded_at) >= from)
       .filter((record) => !to || new Date(record.recorded_at) <= to)
-      .sort((a, b) => new Date(b.recorded_at) - new Date(a.recorded_at))
-      .slice(0, 100)
+      .sort((a, b) => new Date(b.recorded_at) - new Date(a.recorded_at) || b.id.localeCompare(a.id))
+      .slice(filters.offset || 0, (filters.offset || 0) + (filters.limit || 100))
       .map(toHealthRecord);
   }
 
-  const query = { userId };
+  const query = { userId, deleted: { $ne: true } };
 
   if (filters.metricType) {
     query.metricType = filters.metricType;
@@ -188,100 +190,82 @@ const getHealthRecordsByUserId = async (userId, filters = {}) => {
   if (from || to) query.recordedAt = { ...(from ? { $gte: from } : {}), ...(to ? { $lte: to } : {}) };
 
   const records = await HealthRecord.find(query)
-    .sort({ recordedAt: -1 })
-    .limit(100);
+    .sort({ recordedAt: -1, _id: -1 })
+    .skip(filters.offset || 0)
+    .limit(filters.limit || 100)
+    .lean().maxTimeMS(10000);
 
   return records.map(toHealthRecord);
 };
 
 const getDailyHealthHistory = async (userId, { metricType, from, to }) => {
   const start = new Date(from), end = new Date(to);
+  const isTotal = require('../services/health-metrics').TOTAL_METRICS.includes(metricType);
   if (!env.useMongoDB) {
     const groups = new Map();
     healthRecords.filter(row => row.user_id === userId && row.metric_type === metricType && !row.deleted && new Date(row.recorded_at) >= start && new Date(row.recorded_at) <= end).forEach(row => {
-      const date = String(row.activityDate || row.recorded_at).slice(0, 10);
-      const item = groups.get(date) || { date, value: 0, count: 0, unit: row.unit };
-      item.value += Number(row.value); item.count += 1; groups.set(date, item);
+      const date = row.activityDate || require('../services/daily-rules').dayKey(row.recorded_at);
+      const component = row.metadata?.component || null;
+      const key = `${date}:${component || ''}`;
+      const item = groups.get(key) || { date, component, value: 0, weightedTotal: 0, sampleCount: 0, count: 0, unit: row.unit };
+      item.value += Number(row.value); item.weightedTotal += Number(row.value) * sampleWeight(row); item.sampleCount += sampleWeight(row); item.count += 1; groups.set(key, item);
     });
-    return [...groups.values()].sort((a,b) => a.date.localeCompare(b.date));
+    return [...groups.values()].map(({weightedTotal,...row}) => ({...row, value: isTotal ? row.value : weightedTotal / row.sampleCount})).sort((a,b) => a.date.localeCompare(b.date));
   }
   const rows = await HealthRecord.aggregate([
     { $match: { userId: new mongoose.Types.ObjectId(userId), metricType, deleted: { $ne: true }, recordedAt: { $gte: start, $lte: end } } },
-    { $group: { _id: { $ifNull: ['$activityDate', { $dateToString: { date: '$recordedAt', format: '%Y-%m-%d', timezone: 'Asia/Kolkata' } }] }, value: { $sum: '$value' }, count: { $sum: 1 }, unit: { $last: '$unit' } } },
+    { $group: { _id: { date: { $ifNull: ['$activityDate', { $dateToString: { date: '$recordedAt', format: '%Y-%m-%d', timezone: 'Asia/Kolkata' } }] }, component: { $ifNull: ['$metadata.component', null] } }, value: { $sum: '$value' }, weightedTotal: { $sum: { $multiply: ['$value', mongoSampleWeight] } }, sampleCount: { $sum: mongoSampleWeight }, count: { $sum: 1 }, unit: { $last: '$unit' } } },
     { $sort: { _id: 1 } }
   ]);
-  return rows.map(row => ({ date: row._id, value: row.value, count: row.count, unit: row.unit }));
+  return rows.map(row => ({ date: row._id.date, component: row._id.component, value: isTotal ? row.value : row.weightedTotal / row.sampleCount, sampleCount: row.sampleCount, count: row.count, unit: row.unit }));
+};
+
+const getSummaryByUserId = async (userId) => {
+  let groups;
+  if (env.useMongoDB) {
+    groups = await HealthRecord.aggregate([
+      { $match: { userId: new mongoose.Types.ObjectId(userId), deleted: { $ne: true } } },
+      { $group: { _id: { metric: '$metricType', component: { $ifNull: ['$metadata.component', null] } }, total: { $sum: '$value' }, weightedTotal: { $sum: { $multiply: ['$value', mongoSampleWeight] } }, sampleCount: { $sum: mongoSampleWeight } } },
+    ]).option({ maxTimeMS: 10000 });
+  } else {
+    const map = new Map();
+    for (const row of healthRecords.filter(record => record.user_id === userId && !record.deleted).map(toHealthRecord)) {
+      const key = JSON.stringify([row.metricType, row.metadata.component || null]);
+      const group = map.get(key) || { _id: { metric: row.metricType, component: row.metadata.component || null }, total: 0, weightedTotal: 0, sampleCount: 0 };
+      group.total += row.value; group.weightedTotal += row.value * sampleWeight(row); group.sampleCount += sampleWeight(row); map.set(key, group);
+    }
+    groups = [...map.values()];
+  }
+  return Object.fromEntries(groups.map(row => {
+    const metric = row._id.metric === 'active_minutes' ? 'activeMinutes' : row._id.metric;
+    return [row._id.component ? `${metric}_${row._id.component}` : metric, TOTAL_METRICS.includes(row._id.metric) ? row.total : row.weightedTotal / row.sampleCount];
+  }));
 };
 
 const getDashboardByUserId = async (userId) => {
-  if (!env.useMongoDB) {
-    const records = healthRecords
-      .filter((record) => record.user_id === userId)
-      .sort((a, b) => new Date(b.recorded_at) - new Date(a.recorded_at));
-
-    const latestByMetric = new Map();
-    const summaryByMetric = new Map();
-
-    records.forEach((record) => {
-      if (!latestByMetric.has(record.metric_type)) {
-        latestByMetric.set(record.metric_type, record);
+  let rows;
+  if (env.useMongoDB) {
+    rows = await HealthRecord.aggregate([
+      { $match: { userId: new mongoose.Types.ObjectId(userId), deleted: { $ne: true } } },
+      { $sort: { metricType: 1, recordedAt: -1, _id: -1 } },
+      { $group: { _id: { metric: '$metricType', component: { $ifNull: ['$metadata.component', null] } }, record: { $first: '$$ROOT' }, totalRecords: { $sum: 1 }, latestRecordedAt: { $max: '$recordedAt' } } },
+    ]).option({ maxTimeMS: 10000 });
+  } else {
+    const groups = new Map();
+    for (const row of healthRecords.filter(record => record.user_id === userId && !record.deleted).map(toHealthRecord)) {
+      const component = row.metadata.component || null, key = JSON.stringify([row.metricType, component]);
+      const group = groups.get(key) || { _id: { metric: row.metricType, component }, record: row, totalRecords: 0, latestRecordedAt: row.recordedAt };
+      group.totalRecords++;
+      if (+new Date(row.recordedAt) > +new Date(group.latestRecordedAt) || (+new Date(row.recordedAt) === +new Date(group.latestRecordedAt) && row.id > group.record.id)) {
+        group.record = row; group.latestRecordedAt = row.recordedAt;
       }
-
-      const currentSummary = summaryByMetric.get(record.metric_type) || {
-        metricType: record.metric_type,
-        totalRecords: 0,
-        latestRecordedAt: record.recorded_at
-      };
-
-      currentSummary.totalRecords += 1;
-      if (new Date(record.recorded_at) > new Date(currentSummary.latestRecordedAt)) {
-        currentSummary.latestRecordedAt = record.recorded_at;
-      }
-
-      summaryByMetric.set(record.metric_type, currentSummary);
-    });
-
-    return {
-      latestRecords: Array.from(latestByMetric.values()).map(toHealthRecord),
-      summary: Array.from(summaryByMetric.values()).sort((a, b) =>
-        a.metricType.localeCompare(b.metricType)
-      )
-    };
+      groups.set(key, group);
+    }
+    rows = [...groups.values()];
   }
-
-  const [latestRecords, summary] = await Promise.all([
-    HealthRecord.aggregate([
-      { $match: { userId: new mongoose.Types.ObjectId(userId) } },
-      { $sort: { metricType: 1, recordedAt: -1 } },
-      {
-        $group: {
-          _id: '$metricType',
-          record: { $first: '$$ROOT' }
-        }
-      },
-      { $replaceRoot: { newRoot: '$record' } },
-      { $sort: { recordedAt: -1 } }
-    ]),
-    HealthRecord.aggregate([
-      { $match: { userId: new mongoose.Types.ObjectId(userId) } },
-      {
-        $group: {
-          _id: '$metricType',
-          totalRecords: { $sum: 1 },
-          latestRecordedAt: { $max: '$recordedAt' }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ])
-  ]);
-
   return {
-    latestRecords: latestRecords.map(toHealthRecord),
-    summary: summary.map((row) => ({
-      metricType: row._id,
-      totalRecords: row.totalRecords,
-      latestRecordedAt: row.latestRecordedAt
-    }))
+    latestRecords: rows.map(row => toHealthRecord(row.record)).sort((a,b) => new Date(b.recordedAt) - new Date(a.recordedAt)),
+    summary: rows.map(row => ({ metricType: row._id.metric, ...(row._id.component ? { component: row._id.component } : {}), totalRecords: row.totalRecords, latestRecordedAt: row.latestRecordedAt })).sort((a,b) => a.metricType.localeCompare(b.metricType)),
   };
 };
 
@@ -294,5 +278,6 @@ module.exports = {
   pruneHealthConnectRecords,
   getHealthRecordsByUserId,
   getDailyHealthHistory,
-  getDashboardByUserId
+  getDashboardByUserId,
+  getSummaryByUserId
 };

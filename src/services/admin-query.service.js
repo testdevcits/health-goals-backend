@@ -42,6 +42,8 @@ function buildQuery(kind, params = {}) {
     if (typeof params[key] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(params[key])) throw new AppError('Invalid date filter',400);
     const date = new Date(params[key]+end);
     if (Number.isNaN(+date) || date.toISOString().slice(0,10)!==params[key]) throw new AppError('Invalid date filter',400);
+    // Health records and their date picker use Asia/Kolkata calendar days.
+    if (kind === 'records') date.setTime(+date - 330 * 60 * 1000);
     query[config.time] = { ...query[config.time], [operator]: date };
   }
   if (params.from && params.to && params.from>params.to) throw new AppError('From date must be before to date',400);

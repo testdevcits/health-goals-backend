@@ -1,10 +1,12 @@
 const rateLimit = require('express-rate-limit');
+const { ipKeyGenerator } = rateLimit;
 const env = require('../config/env');
 
-const createLimiter = ({ windowMs, max, message }) =>
+const createLimiter = ({ windowMs, max, message, keyGenerator }) =>
   rateLimit({
     windowMs,
     max,
+    ...(keyGenerator ? { keyGenerator } : {}),
     standardHeaders: true,
     legacyHeaders: false,
     // Automated frontend reloads and fixed-OTP checks can legitimately exceed
@@ -32,6 +34,7 @@ const adminWriteLimiter = createLimiter({
 });
 
 const syncLimiter = createLimiter({
+  keyGenerator: req => req.user?.id ? `user:${req.user.id}` : ipKeyGenerator(req.ip || ''),
   windowMs: 60 * 1000,
   max: 30,
   message: 'Too many sync requests. Please slow down.'
