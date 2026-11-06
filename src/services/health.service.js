@@ -159,8 +159,16 @@ const syncRecords = async (userId, payload, requestId = null) => {
 
   const ingestBatch = async session => {
     const results = [];
-    // Load all existing identities once inside the transaction instead of a read per item.
-    const existingRows = env.useMongoDB ? await healthModel.HealthRecord.find({ userId, $or: payload.records.map(row => ({ source: row.source, sourceRecordId: row.sourceRecordId })) }).session(session) : await healthModel.listAdmin();
+    // Load all existing identities once in bounded chunks. A large $or for a
+    // full-day workout batch can become an expensive Mongo query.
+    let existingRows;
+    if (env.useMongoDB) {
+      existingRows = [];
+      for (let offset = 0; offset < payload.records.length; offset += 20) {
+        const chunk = payload.records.slice(offset, offset + 20);
+        existingRows.push(...await healthModel.HealthRecord.find({ userId, $or: chunk.map(row => ({ source: row.source, sourceRecordId: row.sourceRecordId })) }).session(session));
+      }
+    } else existingRows = await healthModel.listAdmin();
     const existing = new Map(existingRows.filter(row => String(row.userId) === String(userId)).map(row => [JSON.stringify([row.source, row.sourceRecordId]), row]));
     // Reject all existing identity conflicts before the first write, including in local storage.
     for (const [index, record] of payload.records.entries()) {
@@ -200,10 +208,9 @@ const syncRecords = async (userId, payload, requestId = null) => {
     }
   } else results = await ingestBatch(null);
   for (const deviceId of deviceIds) await deviceModel.touchDeviceSync(userId, deviceId);
-  // Rules evaluation scans competitions and their activity data; do this once
-  // after the whole batch instead of once for every record.
-  try { if (results.some(result => !result.duplicate)) await require('./reward-engine.service').evaluate(); }
-  catch (error) { console.error('Reward evaluation queued for retry:', error.code || error.name); }
+  // Reward evaluation scans all active rules and their activity windows. Keep
+  // this work out of the mobile request; the worker and competition reads
+  // refresh rewards independently after the health records are committed.
 
   // The mobile read window is not a retention policy: preserve synced history.
 

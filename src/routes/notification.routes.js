@@ -1,0 +1,10 @@
+const router=require('express').Router();
+const {authenticate}=require('../middleware/auth.middleware');
+const {successResponse}=require('../utils/response');
+const {AppError}=require('../middleware/error.middleware');
+const notifications=require('../models/notification.model');
+router.use(authenticate);
+router.get('/',async(req,res,next)=>{try{successResponse(res,200,'Notifications fetched',await notifications.list(req.user.id,{page:req.query.page,limit:req.query.limit}));}catch(error){next(error);}});
+router.patch('/read-all',async(req,res,next)=>{try{successResponse(res,200,'Notifications marked as read',await notifications.markAllRead(req.user.id));}catch(error){next(error);}});
+router.patch('/:id/read',async(req,res,next)=>{try{const notification=await notifications.markRead(req.user.id,req.params.id);if(!notification)throw new AppError('Notification not found',404);successResponse(res,200,'Notification marked as read',{notification});}catch(error){next(error);}});
+module.exports=router;

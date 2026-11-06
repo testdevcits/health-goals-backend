@@ -8,6 +8,7 @@ const morgan = require('morgan');
 const env = require('./config/env');
 const rewardWorker = require('./jobs/reward-worker');
 const settlementWorker = require('./jobs/settlement-worker');
+const challengeWorker = require('./jobs/challenge-worker');
 const { connectDatabase, disconnectDatabase } = require('./config/database');
 const { ensureDatabaseConnected } = require('./config/vercel-database');
 const authRoutes = require('./routes/auth.routes');
@@ -58,6 +59,14 @@ app.get('/api/cron/settlement', async (req, res) => {
   }
 });
 
+app.get('/api/cron/challenges', async (req,res)=>{
+  const cronSecret=process.env.CRON_SECRET;
+  if(!cronSecret)return res.status(503).json({error:'Scheduled challenge finalization is not configured.'});
+  if(req.headers.authorization!==`Bearer ${cronSecret}`)return res.status(401).json({error:'Unauthorized'});
+  try{await ensureDatabaseConnected();const result=await require('./services/challenge.service').evaluate();return res.status(200).json({ok:true,...result});}
+  catch(error){console.error('Scheduled challenge finalization failed:',error.code||error.name);return res.status(500).json({error:'Scheduled challenge finalization failed.'});}
+});
+
 if (process.env.VERCEL === '1') {
   app.use('/api/v1', async (req, res, next) => {
     try {
@@ -73,11 +82,13 @@ app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/admin', require('./routes/admin.routes'));
 app.use('/api/v1/partner', require('./routes/partner.routes'));
 app.use('/api/v1/community', require('./routes/community.routes'));
+app.use('/api/v1/community', require('./routes/challenge.routes'));
 app.use('/api/v1/devices', deviceRoutes);
 app.use('/api/v1/health', healthRoutes);
 app.use('/api/v1/activity', require('./routes/activity.routes'));
 app.use('/api/v1/wallet', walletRoutes);
 app.use('/api/v1/rewards', rewardRoutes);
+app.use('/api/v1/notifications', require('./routes/notification.routes'));
 app.use('/api/v1/redemptions', redemptionRoutes);
 
 app.use(notFoundHandler);
@@ -105,6 +116,7 @@ const startServer = async () => {
     });
     settlementWorker.start();
     rewardWorker.start();
+    challengeWorker.start();
   } catch (error) {
     console.error('Failed to start server:', error.code === 'EADDRINUSE'
       ? `Port ${env.port} is already in use. Stop the process using it or set PORT to a free port.`
@@ -113,6 +125,7 @@ const startServer = async () => {
     if (httpServer?.listening) await new Promise(resolve => httpServer.close(resolve));
     await settlementWorker.stop();
     await rewardWorker.stop();
+    await challengeWorker.stop();
     await disconnectDatabase().catch(() => {});
     process.exit(1);
   }
@@ -121,6 +134,7 @@ const startServer = async () => {
 process.on('SIGINT', async () => {
   await settlementWorker.stop();
   await rewardWorker.stop();
+  await challengeWorker.stop();
   await disconnectDatabase();
   process.exit(0);
 });
@@ -128,6 +142,7 @@ process.on('SIGINT', async () => {
 process.on('SIGTERM', async () => {
   await settlementWorker.stop();
   await rewardWorker.stop();
+  await challengeWorker.stop();
   await disconnectDatabase();
   process.exit(0);
 });

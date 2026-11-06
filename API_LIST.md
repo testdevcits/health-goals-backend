@@ -270,7 +270,15 @@ Common statuses: `200` success, `201` created, `202` OTP challenge, `400` invali
 6. Rewards catalogue → redeem → redemption history.
 7. Admin screens mein allowlisted session se admin APIs call karein.
 
-Source: current backend route/controller/service implementation. Total: **37 versioned APIs + 1 public server health check = 38 method-path combinations**. This guide documents code; live server connectivity is not verified here.
+Source: current backend route/controller/service implementation. The versioned API count includes monthly challenge and notification endpoints below; the legacy count above predates them. This guide documents code; live server connectivity is not verified here.
+
+## Monthly challenges and notifications
+
+- Admin: `GET/POST /api/v1/admin/challenges`, `PATCH /api/v1/admin/challenges/:id`, `POST /api/v1/admin/challenges/:id/publish`, `PATCH /api/v1/admin/challenges/:id/status`, and `POST /api/v1/admin/challenges/:id/finalize` (full-admin writes; sub-admin read-only).
+- User: `GET /api/v1/community/challenges`, `GET /api/v1/community/challenges/:id`, and `POST /api/v1/community/challenges/:id/join`.
+- User notifications: `GET /api/v1/notifications`, `PATCH /api/v1/notifications/:id/read`, and `PATCH /api/v1/notifications/read-all`.
+- Challenge metrics: `STEPS`, `WORKOUT_MINUTES`, `ACTIVE_MINUTES`; month uses `YYYY-MM` and Asia/Kolkata boundaries. Winners are top N or every participant meeting target. Ties share rank, winner points use idempotent wallet transactions, and final records are saved on completion.
+- `/api/cron/challenges` finalizes challenges whose month has ended. Protect it with `Authorization: Bearer $CRON_SECRET`; Vercel invokes it every 15 minutes.
 # Partner integration
 
 - Admin: `GET/POST /api/v1/admin/partners`; `PATCH /api/v1/admin/partners/:id` manages partner records and approval status.
