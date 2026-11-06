@@ -42,3 +42,4 @@ test('device filters use registered models across pages and filter platform/mode
  assert.deepEqual(buildQuery('devices',{platform:'ios',model:'iPhone 16'}).query,{platform:'ios',model:'iPhone 16'});
  assert.throws(()=>buildQuery('devices',{model:{$ne:null}}));
 });
+//
