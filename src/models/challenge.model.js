@@ -36,8 +36,25 @@ const dto = row => ({
   finalizedAt: row.finalizedAt || null, createdAt: row.createdAt || row.created_at, updatedAt: row.updatedAt || row.updated_at
 });
 async function listAdmin() {
-  const rows = env.useMongoDB ? await Challenge.find().sort({ month: -1, createdAt: -1 }).lean() : [...memoryChallenges].sort((a,b)=>String(b.month).localeCompare(String(a.month)));
-  return rows.map(dto);
+  const rows = env.useMongoDB
+    ? await Challenge.find().populate('participants.userId', 'name email publicId').sort({ month: -1, createdAt: -1 }).lean()
+    : [...memoryChallenges].sort((a,b)=>String(b.month).localeCompare(String(a.month)));
+  const users = env.useMongoDB ? null : await require('./user.model').listUsers();
+  return rows.map(row => ({
+    ...dto(row),
+    participants: (row.participants || []).map(participant => {
+      const user = env.useMongoDB
+        ? participant.userId
+        : users.find(item => String(item.id) === idOf(participant.userId?._id || participant.userId));
+      return {
+        userId: idOf(user?._id || user?.id || participant.userId),
+        name: user?.name || 'Member',
+        email: user?.email || '',
+        publicId: user?.publicId || null,
+        joinedAt: participant.joinedAt || null
+      };
+    })
+  }));
 }
 async function find(id) {
   if (env.useMongoDB) return mongoose.isValidObjectId(id) ? Challenge.findById(id) : null;

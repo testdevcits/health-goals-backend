@@ -13,10 +13,24 @@ async function runs(){return env.useMongoDB?Run.find().lean():[...memoryRuns.val
 async function achievements(userId){return env.useMongoDB?Award.find({userId:String(userId)}).sort({awardedAt:-1}).lean():[...memoryAwards.values()].filter(row=>row.userId===String(userId));}
 async function snapshot(rule,now){
  const window=period(rule,now),key=`${rule.id}:${window.start}`;
- let existing=env.useMongoDB?await Run.findOne({key}).lean():memoryRuns.get(key);if(existing)return existing;
  const options=await rules.options();const active=options.users.filter(row=>row.status==='ACTIVE');
  let participants=active.filter(row=>!rule.targetUserId||row.id===rule.targetUserId).map(row=>({id:row.id,name:row.name,userIds:[row.id]}));
  if(rule.audience==='GROUP'){const group=options.groups.find(row=>row.id===rule.targetGroupId);participants=group?[{id:group.id,name:group.name,userIds:group.members.filter(row=>row.status==='ACTIVE').map(row=>row.id)}]:[];}
+ let existing=env.useMongoDB?await Run.findOne({key}).lean():memoryRuns.get(key);
+ if(existing){
+  // Individual competitions are open to every active user, including accounts
+  // created after the period's first evaluation. Group membership stays fixed
+  // for the period because it is deliberately captured as a group snapshot.
+  if(!existing.finalizedAt&&rule.audience==='INDIVIDUAL'&&!rule.targetUserId&&now<=new Date(`${window.end}T23:59:59.999+05:30`)){
+   const present=new Set(existing.participants.flatMap(row=>row.userIds.map(String)));
+   const additions=participants.filter(row=>!present.has(row.id));
+   if(additions.length){
+    if(env.useMongoDB){await Run.updateOne({key,finalizedAt:null},{$addToSet:{participants:{$each:additions}}});existing=await Run.findOne({key}).lean();}
+    else existing.participants.push(...additions);
+   }
+  }
+  return existing;
+ }
  const value={key,ruleId:rule.id,...window,rule,participants,rows:[]};
  if(env.useMongoDB){try{return await Run.findOneAndUpdate({key},{$setOnInsert:value},{upsert:true,new:true}).lean();}catch(error){if(error.code===11000)return Run.findOne({key}).lean();throw error;}}
  memoryRuns.set(key,value);return value;
