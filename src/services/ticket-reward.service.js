@@ -47,7 +47,7 @@ async function leaderboard(month, audience) {
     return [...byId.entries()].map(([id, user]) => ({ id, name: user.name || 'User', email: user.email, profileImageUrl: user.profileImageUrl || '', steps: totals.get(id) || 0, rank: 0 }))
       .sort((a,b) => b.steps-a.steps || a.name.localeCompare(b.name)).map((row,index) => ({ ...row, rank: index + 1 }));
   }
-  const groups = env.useMongoDB ? await community.Group.find().lean() : community.memoryGroups;
+  const groups = env.useMongoDB ? await community.Group.find({deletedAt:null}).lean() : community.memoryGroups.filter(group=>!group.deletedAt);
   return groups.map(group => {
     const members = (group.members || []).map(member => String(member.userId?._id || member.userId || member));
     const leaderId = String(group.createdBy?._id || group.createdBy || '');

@@ -87,8 +87,8 @@ async function options() {
     : (await userModel.listUsers()).filter(user=>user.role!=='ADMIN').sort((a,b)=>a.name.localeCompare(b.name));
   const users=allUsers.map(user=>({id:String(user._id||user.id),name:user.name,email:user.email,publicId:user.publicId||null,status:user.status||'ACTIVE'}));
   const groups=env.useMongoDB
-    ? await community.Group.find().select('name description emoji isPrivate maxMembers members createdAt').sort({createdAt:-1,_id:-1}).lean()
-    : community.memoryGroups;
+    ? await community.Group.find({deletedAt:null}).select('name description emoji isPrivate maxMembers members createdAt').sort({createdAt:-1,_id:-1}).lean()
+    : community.memoryGroups.filter(group=>!group.deletedAt);
   const userById=new Map(users.map(user=>[user.id,user]));
   return {users,groups:groups.map(group=>({id:String(group._id||group.id),name:group.name,description:group.description||'',emoji:group.emoji||'🏃',private:Boolean(group.isPrivate??group.private),memberCount:(group.members||[]).length,maxMembers:10,members:(group.members||[]).map(member=>userById.get(String(member.userId?._id||member.userId||member))||null).filter(Boolean)}))};
 }
@@ -96,7 +96,7 @@ async function validateAudience(data) {
   if (data.audience==='GROUP') {
     if (!data.targetGroupId) throw new AppError('Select the group this rule applies to',400);
     if(env.useMongoDB&&!mongoose.isValidObjectId(data.targetGroupId))throw new AppError('Selected group was not found. Refresh group options.',404);
-    const exists=env.useMongoDB ? await community.Group.exists({_id:data.targetGroupId}) : community.memoryGroups.some(group=>String(group.id)===data.targetGroupId);
+    const exists=env.useMongoDB ? await community.Group.exists({_id:data.targetGroupId,deletedAt:null}) : community.memoryGroups.some(group=>String(group.id)===data.targetGroupId&&!group.deletedAt);
     if (!exists) throw new AppError('Selected group was not found. Refresh group options.',404);
     data.targetUserId=null;
   } else {
