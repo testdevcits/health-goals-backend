@@ -10,6 +10,7 @@ router.post('/login', authLimiter, authController.login);
 router.post('/verify-otp', authLimiter, authController.verifyOtp);
 router.post('/password/forgot', authLimiter, authController.requestPasswordReset);
 router.post('/password/reset', authLimiter, authController.resetPassword);
+router.patch('/me/password', authenticate, authLimiter, authController.changePassword);
 router.post('/google', authLimiter, authController.google);
 router.post('/refresh', authLimiter, authController.refresh);
 router.post('/logout', authenticate, authController.logout);

@@ -5,11 +5,22 @@ const { OAuth2Client } = require('google-auth-library');
 const env = require('../config/env');
 const userModel = require('../models/user.model');
 const { AppError } = require('../middleware/error.middleware');
+const { canonicalProfileKey, normalizeProfileAnswers, customProfileAnswers, normalizeGender, defaultProfileKeys } = require('../utils/profile-answers');
 
 const otpService = require('./otp.service');
 const googleClient = new OAuth2Client();
 
 const refreshDigest = token => crypto.createHash('sha256').update(token).digest('hex');
+const sanitizeProfileResponse = user => {
+  const answers = normalizeProfileAnswers(user.profileAnswers);
+  const sanitized = { ...user };
+  for (const key of defaultProfileKeys) {
+    if ((sanitized[key] === undefined || sanitized[key] === null || sanitized[key] === '') && answers[key] !== undefined) sanitized[key] = answers[key];
+  }
+  sanitized.gender = normalizeGender(sanitized.gender);
+  sanitized.profileAnswers = customProfileAnswers(answers);
+  return sanitized;
+};
 const issueTokens = async (user, sessionExpiresAt = Math.floor(Date.now()/1000) + 3600, previousHash = null) => {
   const now = Math.floor(Date.now()/1000);
   const remaining = sessionExpiresAt - now;
@@ -61,7 +72,7 @@ const getPendingProfileQuestions = async userId => {
     require('../models/profile-question.model').list({ activeOnly: true })
   ]);
   if (!user) throw new AppError('User not found', 404);
-  const answers = user.profileAnswers || {};
+  const answers = normalizeProfileAnswers(user.profileAnswers);
   const legacyFields = { gender: user.gender, birthDate: user.birthDate, heightCm: user.heightCm, weightKg: user.weightKg };
   if (user.role !== 'USER') return [];
   return questions.filter(question => {
@@ -74,14 +85,20 @@ const saveProfileAnswers = async (userId, payload) => {
   const { answers: incoming } = payload || {};
   if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw new AppError('answers must be an object', 400);
   const questions = await require('../models/profile-question.model').list({ activeOnly: true });
-  const available = new Map(questions.map(question => [question.key, question]));
   const existing = await userModel.findUserById(userId);
   if (!existing) throw new AppError('User not found', 404);
-  const profileAnswers = { ...(existing.profileAnswers || {}) };
+  const profileAnswers = normalizeProfileAnswers(existing.profileAnswers);
   const profileFields = {};
-  for (const [key, raw] of Object.entries(incoming)) {
-    const question = available.get(key);
-    if (!question) throw new AppError(`Unknown or inactive profile question: ${key}`, 400);
+  const normalizedQuestions = new Map();
+  for (const question of questions) {
+    normalizedQuestions.set(question.key, question);
+    normalizedQuestions.set(String(question.key).toLowerCase(), question);
+  }
+  for (const [incomingKey, raw] of Object.entries(incoming)) {
+    const canonicalKey = canonicalProfileKey(incomingKey);
+    const question = normalizedQuestions.get(canonicalKey) || normalizedQuestions.get(String(incomingKey).toLowerCase());
+    if (!question) throw new AppError(`Unknown or inactive profile question: ${incomingKey}`, 400);
+    const key = canonicalProfileKey(question.key);
     if (raw === null || raw === '') {
       if (question.required) throw new AppError(`${question.label} is required`, 400);
       profileAnswers[key] = null;
@@ -89,6 +106,7 @@ const saveProfileAnswers = async (userId, payload) => {
       continue;
     }
     let value = raw;
+    if (key === 'gender') value = normalizeGender(value);
     if (question.type === 'number') {
       value = Number(raw);
       const bounds = key === 'heightCm' ? [50, 300] : key === 'weightKg' ? [20, 500] : [0, 10000000];
@@ -113,7 +131,7 @@ const saveProfileAnswers = async (userId, payload) => {
   if (!Object.keys(incoming).length) throw new AppError('Provide at least one profile answer', 400);
   const user = await userModel.updateProfile(userId, { ...profileFields, profileAnswers });
   if (!user) throw new AppError('User not found', 404);
-  return { user, pendingQuestions: await getPendingProfileQuestions(userId) };
+  return { user: sanitizeProfileResponse(user), pendingQuestions: await getPendingProfileQuestions(userId) };
 };
 
 const login = async ({ identifier, userId, email, password, admin = false }) => {
@@ -140,6 +158,20 @@ const requestPasswordReset = async ({ email }) => {
   // Return the same response for unknown email addresses to avoid account discovery.
   if (!user) return { accepted: true };
   return otpService.request({ email, purpose: 'password_reset', payload: { userId: user.id } });
+};
+
+const changePassword = async (userId, payload) => {
+  const { currentPassword, newPassword } = payload || {};
+  if (typeof currentPassword !== 'string' || !currentPassword || currentPassword.length > 72) throw new AppError('Current password is required', 400);
+  if (typeof newPassword !== 'string' || newPassword.length < 8 || newPassword.length > 72) throw new AppError('New password must be between 8 and 72 characters', 400);
+  const user = await userModel.findAuthUserById(userId);
+  if (!user) throw new AppError('User not found', 404);
+  const hash = user.password_hash || user.passwordHash;
+  if (!hash || !await bcrypt.compare(currentPassword, hash)) throw new AppError('Current password is incorrect', 401);
+  if (await bcrypt.compare(newPassword, hash)) throw new AppError('New password must be different from the current password', 400);
+  const passwordHash = await bcrypt.hash(newPassword, 12);
+  if (!await userModel.updatePassword(userId, passwordHash)) throw new AppError('Could not update password', 500);
+  return { passwordChanged: true, requiresSignIn: true };
 };
 
 const resetPassword = async ({ challengeId, otp, password }) => {
@@ -248,7 +280,7 @@ const getCurrentUser = async (userId) => {
     throw new AppError('User not found', 404);
   }
 
-  return user;
+  return sanitizeProfileResponse(user);
 };
 
 const updateCurrentProfile = async (userId, payload) => {
@@ -322,6 +354,7 @@ module.exports = {
   register,
   login,
   requestPasswordReset,
+  changePassword,
   resetPassword,
   loginWithGoogle,
   refresh,

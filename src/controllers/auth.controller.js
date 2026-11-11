@@ -101,6 +101,10 @@ module.exports = {
     try { return successResponse(res, 200, 'Password reset successfully', await authService.resetPassword(req.body)); }
     catch (error) { next(error); }
   },
+  changePassword: async (req, res, next) => {
+    try { return successResponse(res, 200, 'Password changed successfully. Sign in again with your new password.', await authService.changePassword(req.user.id, req.body)); }
+    catch (error) { next(error); }
+  },
   google: async (req, res, next) => {
     try { return successResponse(res, 200, 'Google sign-in successful', await authService.loginWithGoogle(req.body)); }
     catch (error) { next(error); }

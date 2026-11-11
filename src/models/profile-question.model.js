@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const env = require('../config/env');
 const crypto = require('crypto');
+const { canonicalProfileKey } = require('../utils/profile-answers');
 
 const questionSchema = new mongoose.Schema({
   key: { type: String, required: true, unique: true, trim: true, lowercase: true },
@@ -23,7 +24,7 @@ const defaults = [
 let memorySeeded = false;
 
 const dto = row => ({
-  id: String(row.id || row._id), key: row.key, label: row.label, type: row.type,
+  id: String(row.id || row._id), key: canonicalProfileKey(row.key), label: row.label, type: row.type,
   options: row.key === 'gender'
     ? [...new Set((row.options?.length ? row.options : ['Female', 'Male', 'Non-binary', 'Prefer not to say']).map(value => value === 'Woman' ? 'Female' : value === 'Man' ? 'Male' : value))]
     : row.options || [], required: Boolean(row.required), active: row.active !== false,
