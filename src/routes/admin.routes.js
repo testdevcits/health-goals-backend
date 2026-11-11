@@ -11,6 +11,7 @@ const partnerModel = require('../models/partner.model');
 const { successResponse } = require('../utils/response');
 const { authLimiter, adminWriteLimiter } = require('../middleware/rate-limit.middleware');
 const bcrypt = require('bcrypt');
+const displayGender=value=>value==='Woman'?'Female':value==='Man'?'Male':value;
 router.use(authenticate);
 router.use((req,res,next)=>{
   const configuredAdmin=env.adminEmails.includes(req.user.email.toLowerCase());
@@ -307,9 +308,9 @@ router.get('/users/:id',async(req,res,next)=>{
       if(value===null||value===undefined||value==='')return null;
       const question=questionByKey.get(key);
       const label=question?.label||key.replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/^./,character=>character.toUpperCase());
-      return {key,label,value};
+      return {key,label,value:key==='gender'?displayGender(value):value};
     }).filter(Boolean);
-    successResponse(res,200,'User details',{user,profileAnswers,wallet:points,recordCount:records.total,deviceCount:devices.total,canChangeStatus:req.adminRole==='ADMIN'&&user.id!==req.user.id&&!env.adminEmails.includes(user.email.toLowerCase())});
+    successResponse(res,200,'User details',{user:{...user,gender:displayGender(user.gender)},profileAnswers,wallet:points,recordCount:records.total,deviceCount:devices.total,canChangeStatus:req.adminRole==='ADMIN'&&user.id!==req.user.id&&!env.adminEmails.includes(user.email.toLowerCase())});
   }catch(error){next(error);}
 });
 router.get('/users/:id/record-chart',async(req,res,next)=>{try{const user=await findUser(req.params.id);successResponse(res,200,'All-date activity chart',await require('../services/record-chart.service').chart(user.id,req.query));}catch(error){next(error);}});

@@ -15,7 +15,7 @@ const questionSchema = new mongoose.Schema({
 const ProfileQuestion = mongoose.models.ProfileQuestion || mongoose.model('ProfileQuestion', questionSchema);
 const memory = [];
 const defaults = [
-  { key: 'gender', label: 'Gender', type: 'select', options: ['Woman', 'Man', 'Non-binary', 'Prefer not to say'], order: 10 },
+  { key: 'gender', label: 'Gender', type: 'select', options: ['Female', 'Male', 'Non-binary', 'Prefer not to say'], order: 10 },
   { key: 'birthDate', label: 'Date of birth (used to calculate age)', type: 'date', order: 20 },
   { key: 'heightCm', label: 'Height (cm)', type: 'number', order: 30 },
   { key: 'weightKg', label: 'Weight (kg)', type: 'number', order: 40 }
@@ -24,7 +24,9 @@ let memorySeeded = false;
 
 const dto = row => ({
   id: String(row.id || row._id), key: row.key, label: row.label, type: row.type,
-  options: row.options || [], required: Boolean(row.required), active: row.active !== false,
+  options: row.key === 'gender'
+    ? [...new Set((row.options?.length ? row.options : ['Female', 'Male', 'Non-binary', 'Prefer not to say']).map(value => value === 'Woman' ? 'Female' : value === 'Man' ? 'Male' : value))]
+    : row.options || [], required: Boolean(row.required), active: row.active !== false,
   order: Number(row.order || 0), createdAt: row.createdAt || row.created_at || null,
   updatedAt: row.updatedAt || row.updated_at || null
 });

@@ -271,7 +271,7 @@ const updateCurrentProfile = async (userId, payload) => {
       if (phone && (digits.length < 10 || digits.length > 15)) throw new AppError('phone must contain 10 to 15 digits', 400);
       profile.encryptedPhone = phone ? require('./voucher-code.service').encrypt(phone) : null;
     } else if (field === 'gender') {
-      if (!['Woman', 'Man', 'Non-binary', 'Prefer not to say', ''].includes(value)) throw new AppError('gender is invalid', 400);
+      if (!['Female', 'Male', 'Woman', 'Man', 'Non-binary', 'Prefer not to say', ''].includes(value)) throw new AppError('gender is invalid', 400);
       profile.gender = value;
     } else {
       if (typeof value !== 'string' || value.trim().length > (field === 'name' ? 100 : 500)) throw new AppError(`${field} must be text`, 400);
