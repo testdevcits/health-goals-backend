@@ -18,21 +18,70 @@ router.use((req,res,next)=>{
   return ['ADMIN','SUB_ADMIN'].includes(req.adminRole) ? next() : next(new AppError('Admin access required',403));
 });
 const fullAdminOnly=(req,res,next)=>req.adminRole==='ADMIN'?next():next(new AppError('Only full administrators can manage this setting',403));
-const subAdminReadAllowed=req=>req.method==='GET' && (/^\/(overview|users|records|devices|challenges)(\/|$)/.test(req.path) || req.path==='/data-export');
-router.use((req,res,next)=>req.adminRole!=='SUB_ADMIN'||subAdminReadAllowed(req)||req.method==='POST'&&req.path==='/activity-import'?next():next(new AppError('Sub-admin access is limited to viewing, filtering, importing, and exporting user activity data',403)));
+const defaultSubAdminPermissions=['users:read','records:read','devices:read','challenges:read','activity:import','data:export'];
+const permissionForRequest=req=>{
+  if(req.path==='/data-export'&&req.method==='GET')return 'data:export';
+  if(req.path==='/activity-import'&&req.method==='POST')return 'activity:import';
+  if(req.method==='GET'&&/^\/users(\/|$)/.test(req.path))return 'users:read';
+  if(req.method==='GET'&&/^\/records(\/|$)/.test(req.path))return 'records:read';
+  if(req.method==='GET'&&/^\/devices(\/|$)/.test(req.path))return 'devices:read';
+  if(req.method==='GET'&&/^\/challenges(\/|$)/.test(req.path))return 'challenges:read';
+  if(req.method==='GET'&&req.path==='/overview')return 'users:read';
+  return null;
+};
+router.use(async(req,res,next)=>{try{
+  if(req.adminRole!=='SUB_ADMIN')return next();
+  const user=await users.findUserById(req.user.id);const permissions=user?.adminPermissions==null?defaultSubAdminPermissions:user.adminPermissions;
+  const required=permissionForRequest(req);
+  return required&&permissions.includes(required)?next():next(new AppError('Sub-admin permission is not granted for this action',403));
+}catch(error){next(error);}});
 const coinRules=require('../services/coin-rules.service');
 const rewardRules=require('../services/reward-rule.service');
 router.get('/administrators',fullAdminOnly,async(req,res,next)=>{try{
   const items=await users.listAdministrators();
-  const activity=await audit.listAuditLogs({limit:250});
+  const activity=(await audit.listAuditLogs({limit:250})).items;
   const byUser=new Map();
   for(const row of activity){if(row.userId&&!byUser.has(String(row.userId)))byUser.set(String(row.userId),row);}
   successResponse(res,200,'Administrators fetched',{items:items.map(item=>({...item,lastActivity:byUser.get(String(item.id))||null}))});
 }catch(error){next(error);}});
+router.get('/audit-logs',fullAdminOnly,async(req,res,next)=>{try{
+  const {page,limit}=query.buildQuery('users',req.query);let userId;
+  if(req.query.userId){const target=await users.findUserById(req.query.userId);if(!target)throw new AppError('User not found',404);userId=target.id;}
+  if(req.query.action&&(typeof req.query.action!=='string'||req.query.action.length>100))throw new AppError('action filter must be at most 100 characters',400);
+  const dateQuery=query.buildQuery('users',{from:req.query.from,to:req.query.to}).query;
+  successResponse(res,200,'Audit logs fetched',await audit.listAuditLogs({userId,action:req.query.action,from:dateQuery.createdAt?.$gte,to:dateQuery.createdAt?.$lte,page,limit}));
+}catch(error){next(error);}});
+router.get('/analytics',fullAdminOnly,async(req,res,next)=>{try{
+  const {query:dateFilter}=query.buildQuery('records',{from:req.query.from,to:req.query.to});
+  const from=dateFilter.recordedAt?.$gte,to=dateFilter.recordedAt?.$lte;
+  const {User}=users;const {HealthRecord}=require('../models/health.model');const {Redemption}=rewardModel;
+  if(env.useMongoDB){
+    const userMatch={...(from||to?{createdAt:{...(from?{$gte:from}:{}),...(to?{$lte:to}:{})}}:{})};
+    const recordMatch={deleted:{$ne:true},...(from||to?{recordedAt:{...(from?{$gte:from}:{}),...(to?{$lte:to}:{})}}:{})};
+    const redemptionMatch={...(from||to?{createdAt:{...(from?{$gte:from}:{}),...(to?{$lte:to}:{})}}:{})};
+    const [registrations,records,redemptions,totals]=await Promise.all([
+      User.aggregate([{$match:userMatch},{$group:{_id:{$dateToString:{date:'$createdAt',format:'%Y-%m-%d',timezone:'Asia/Kolkata'}},count:{$sum:1}}},{$sort:{_id:1}}]),
+      HealthRecord.aggregate([{$match:recordMatch},{$group:{_id:{$dateToString:{date:'$recordedAt',format:'%Y-%m-%d',timezone:'Asia/Kolkata'}},count:{$sum:1}}},{$sort:{_id:1}}]),
+      Redemption.aggregate([{$match:redemptionMatch},{$group:{_id:{$dateToString:{date:'$createdAt',format:'%Y-%m-%d',timezone:'Asia/Kolkata'}},count:{$sum:1},pointsUsed:{$sum:'$pointsUsed'}}},{$sort:{_id:1}}]),
+      Promise.all([User.countDocuments({}),HealthRecord.countDocuments({deleted:{$ne:true}}),Redemption.countDocuments({})])
+    ]);
+    return successResponse(res,200,'Admin analytics fetched',{from:req.query.from||null,to:req.query.to||null,timezone:'Asia/Kolkata',totals:{users:totals[0],records:totals[1],redemptions:totals[2]},registrations,records,redemptions});
+  }
+  const allUsers=await users.listUsers(),allRecords=(await require('../models/health.model').listAdmin()).filter(row=>!row.deleted),allRedemptions=await rewardModel.listAllRedemptions();
+  const bucket=(rows,getDate)=>{const map=new Map();for(const row of rows){const time=new Date(getDate(row));if(from&&time<from||to&&time>to)continue;const date=require('../services/daily-rules').dayKey(time);map.set(date,(map.get(date)||0)+1);}return [...map].sort(([a],[b])=>a.localeCompare(b)).map(([_id,count])=>({_id,count}));};
+  return successResponse(res,200,'Admin analytics fetched',{from:req.query.from||null,to:req.query.to||null,timezone:'Asia/Kolkata',totals:{users:allUsers.length,records:allRecords.length,redemptions:allRedemptions.length},registrations:bucket(allUsers,row=>row.createdAt||row.created_at),records:bucket(allRecords,row=>row.recordedAt||row.recorded_at),redemptions:bucket(allRedemptions,row=>row.createdAt||row.created_at)});
+}catch(error){next(error);}});
 router.get('/administrators/:id/activity',fullAdminOnly,async(req,res,next)=>{try{
   const user=await users.findUserById(req.params.id);
   if(!user||!['ADMIN','SUB_ADMIN'].includes(user.role))throw new AppError('Administrator not found',404);
-  successResponse(res,200,'Administrator activity fetched',{user,items:await audit.listAuditLogs({userId:user.id,limit:100})});
+  successResponse(res,200,'Administrator activity fetched',{user,items:(await audit.listAuditLogs({userId:user.id,limit:100})).items});
+}catch(error){next(error);}});
+router.patch('/administrators/:id/permissions',fullAdminOnly,adminWriteLimiter,async(req,res,next)=>{try{
+  const allowed=['users:read','records:read','devices:read','challenges:read','activity:import','data:export'];const permissions=req.body?.permissions;
+  if(!Array.isArray(permissions)||permissions.some(permission=>!allowed.includes(permission))||new Set(permissions).size!==permissions.length)throw new AppError('permissions must be a unique list of supported sub-admin permissions',400,{allowed});
+  const administrator=await users.updateAdminPermissions(req.params.id,permissions);if(!administrator)throw new AppError('Sub-admin not found',404);
+  await audit.createAuditLog({userId:req.user.id,action:'ADMIN_SUB_ADMIN_PERMISSIONS_UPDATED',metadata:{administratorId:administrator.id,permissions},requestId:req.requestId});
+  successResponse(res,200,'Sub-admin permissions updated',{administrator});
 }catch(error){next(error);}});
 router.post('/administrators',fullAdminOnly,adminWriteLimiter,async(req,res,next)=>{try{
   const body=req.body||{};const name=String(body.name||'').trim();const email=String(body.email||'').trim().toLowerCase();const password=String(body.password||'');
@@ -256,6 +305,14 @@ router.get('/settlements/status',async(req,res,next)=>{
     successResponse(res,200,'Settlement worker status',{enabled:env.settlementEnabled&&env.useMongoDB,timezone:'Asia/Kolkata',batchSize:20,concurrency:2,counts});
   }catch(error){next(error);}
 });
+router.get('/settlements/queue',fullAdminOnly,async(req,res,next)=>{
+  try { const {page,limit}=query.buildQuery('users',req.query);const state=req.query.state;if(state&&!['PENDING','RETRY','PROCESSING'].includes(state))throw new AppError('state must be PENDING, RETRY, or PROCESSING',400);successResponse(res,200,'Settlement queue fetched',await require('../services/daily-settlement.service').adminQueue({page,limit,state})); }
+  catch(error){next(error);}
+});
+router.post('/settlements/:id/retry',fullAdminOnly,adminWriteLimiter,async(req,res,next)=>{
+  try { const row=await require('../services/daily-settlement.service').retryAdmin(req.params.id);if(!row)throw new AppError('Retryable settlement not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_SETTLEMENT_RETRY_QUEUED',metadata:{settlementId:req.params.id,day:row.day},requestId:req.requestId});successResponse(res,200,'Settlement retry queued',{settlement:row}); }
+  catch(error){next(error);}
+});
 router.post('/settlements/run',adminWriteLimiter,async(req,res,next)=>{
   try {
     const settlement=require('../services/daily-settlement.service');
@@ -282,5 +339,19 @@ router.patch('/users/:id/status',authLimiter,async(req,res,next)=>{
     await audit.createAuditLog({userId:req.user.id,action:'ADMIN_USER_STATUS_CHANGED',metadata:{targetUserId:user.id,previousStatus:user.status,status},requestId:req.requestId});
     successResponse(res,200,'User status updated',{user:updated});
   }catch(error){next(error);}
+});
+router.post('/users/bulk-status',fullAdminOnly,adminWriteLimiter,async(req,res,next)=>{
+ try {
+  const {ids,status}=req.body||{};if(!Array.isArray(ids)||ids.length<1||ids.length>100||ids.some(id=>typeof id!=='string')||new Set(ids).size!==ids.length)throw new AppError('ids must contain 1 to 100 unique user IDs',400);
+  if(!['ACTIVE','SUSPENDED'].includes(status))throw new AppError('status must be ACTIVE or SUSPENDED',400);
+  const results=[];
+  for(const id of ids){const user=await users.findUserById(id);if(!user){results.push({id,success:false,error:'NOT_FOUND'});continue;}if(user.id===req.user.id||env.adminEmails.includes(user.email.toLowerCase())||['ADMIN','SUB_ADMIN'].includes(user.role)){results.push({id,success:false,error:'ADMIN_ACCOUNT'});continue;}const updated=await users.updateStatus(user.id,status);results.push({id:user.id,success:true,status:updated.status});}
+  await audit.createAuditLog({userId:req.user.id,action:'ADMIN_USERS_BULK_STATUS_CHANGED',metadata:{requested:ids.length,status,succeeded:results.filter(row=>row.success).length,failed:results.filter(row=>!row.success).length},requestId:req.requestId});
+  successResponse(res,200,'Bulk user status update completed',{status,results,succeeded:results.filter(row=>row.success).length,failed:results.filter(row=>!row.success).length});
+ }catch(error){next(error);}
+});
+router.patch('/devices/:id/status',fullAdminOnly,adminWriteLimiter,async(req,res,next)=>{
+ try {const status=req.body?.status;if(!['ACTIVE','REMOVED'].includes(status))throw new AppError('status must be ACTIVE or REMOVED',400);const device=await require('../models/device.model').setAdminDeviceStatus(req.params.id,status);if(!device)throw new AppError('Device not found',404);await audit.createAuditLog({userId:req.user.id,action:'ADMIN_DEVICE_STATUS_CHANGED',metadata:{deviceId:device.id,userId:device.userId,status},requestId:req.requestId});successResponse(res,200,'Device status updated',{device});}
+ catch(error){next(error);}
 });
 module.exports=router;

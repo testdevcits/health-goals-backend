@@ -83,4 +83,21 @@ async function history(userId,page=1,limit=20,params={}){
  return {items:rows.map(r=>publicDay(r,pending.includes(r.day)?records.filter(record=>record.activityDate===r.day):undefined)),total,page,limit,totalPages:Math.ceil(total/limit)};
 }
 
-module.exports={enqueue,claim,settle,retry,processBatch,progress,history};
+async function adminQueue({page=1,limit=20,state}={}) {
+ const states=state?[state]:['PENDING','RETRY','PROCESSING'];
+ const filter={state:{$in:states}};let rows,total;
+ if(env.useMongoDB){[rows,total]=await Promise.all([DailyActivity.find(filter).sort({dueAt:1,_id:1}).skip((page-1)*limit).limit(limit).lean(),DailyActivity.countDocuments(filter)]);}
+ else{const all=[...memoryDays.values()].filter(row=>states.includes(row.state)).sort((a,b)=>a.dueAt-b.dueAt);total=all.length;rows=all.slice((page-1)*limit,page*limit);}
+ const ids=[...new Set(rows.map(row=>String(row.userId)))];
+ const profiles=env.useMongoDB?await users.User.find({_id:{$in:ids}}).select('name email publicId').lean():(await users.listUsers()).filter(row=>ids.includes(String(row.id)));
+ const byId=new Map(profiles.map(row=>[String(row._id||row.id),{id:String(row._id||row.id),name:row.name,email:row.email,publicId:row.publicId||null}]));
+ return {items:rows.map(row=>({...publicDay(row),id:String(row._id),user:byId.get(String(row.userId))||null,lastError:row.lastError||null,attempts:row.attempts||0,nextAttemptAt:row.nextAttemptAt})),total,page,limit,totalPages:Math.ceil(total/limit)};
+}
+async function retryAdmin(id) {
+ const now=new Date();
+ if(env.useMongoDB){const row=await DailyActivity.findOneAndUpdate({_id:id,$or:[{state:{$in:['PENDING','RETRY']}},{state:'PROCESSING',lockUntil:{$lte:now}}]},{$set:{state:'RETRY',nextAttemptAt:now,lockUntil:new Date(0),leaseToken:null,lastError:null}},{new:true}).lean();return row?publicDay(row):null;}
+ const row=memoryDays.get(id);if(!row||!['PENDING','RETRY'].includes(row.state)&&!(row.state==='PROCESSING'&&row.lockUntil<=now))return null;
+ Object.assign(row,{state:'RETRY',nextAttemptAt:now,lockUntil:new Date(0),leaseToken:null,lastError:null});return publicDay(row);
+}
+
+module.exports={enqueue,claim,settle,retry,processBatch,progress,history,adminQueue,retryAdmin};

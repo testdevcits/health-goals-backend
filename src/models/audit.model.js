@@ -40,9 +40,13 @@ const createAuditLog = async ({ userId = null, action, metadata = {}, requestId 
 module.exports = {
   AuditLog,
   createAuditLog,
-  listAuditLogs: async ({ userId, limit = 100 } = {}) => {
-    if (!env.useMongoDB) return auditLogs.filter(row => !userId || String(row.user_id) === String(userId)).slice(-limit).reverse();
-    const rows = await AuditLog.find(userId ? { userId } : {}).sort({ createdAt: -1 }).limit(limit).lean();
-    return rows.map(row => ({ id: String(row._id), userId: row.userId ? String(row.userId) : null, action: row.action, metadata: row.metadata || {}, createdAt: row.createdAt }));
+  listAuditLogs: async ({ userId, action, from, to, page = 1, limit = 100 } = {}) => {
+    const filter = { ...(userId ? { userId } : {}), ...(action ? { action: new RegExp(action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') } : {}), ...(from || to ? { createdAt: { ...(from ? { $gte: new Date(from) } : {}), ...(to ? { $lte: new Date(to) } : {}) } } : {}) };
+    if (!env.useMongoDB) {
+      const rows = auditLogs.filter(row => (!userId || String(row.user_id) === String(userId)) && (!action || row.action.toLowerCase().includes(action.toLowerCase())) && (!from || new Date(row.created_at) >= new Date(from)) && (!to || new Date(row.created_at) <= new Date(to))).sort((a,b) => new Date(b.created_at) - new Date(a.created_at));
+      return { items: rows.slice((page-1)*limit,page*limit).map(row => ({ id: row.id, userId: row.user_id, action: row.action, metadata: row.metadata, requestId: row.request_id, createdAt: row.created_at })), total: rows.length, page, limit, totalPages: Math.ceil(rows.length/limit) };
+    }
+    const [rows,total] = await Promise.all([AuditLog.find(filter).sort({ createdAt: -1, _id: -1 }).skip((page-1)*limit).limit(limit).lean(), AuditLog.countDocuments(filter)]);
+    return { items: rows.map(row => ({ id: String(row._id), userId: row.userId ? String(row.userId) : null, action: row.action, metadata: row.metadata || {}, requestId: row.requestId || null, createdAt: row.createdAt })), total, page, limit, totalPages: Math.ceil(total/limit) };
   }
 };

@@ -282,6 +282,27 @@ const getDailyHistory = async (userId, filters = {}) => {
   return healthModel.getDailyHealthHistory(userId, { ...filters, from, to });
 };
 
+const getTrends = async (userId, filters = {}) => {
+  const metricType = filters.metricType;
+  validateMetricType(metricType);
+  const { query } = require('./admin-query.service').buildQuery('records', { from: filters.from, to: filters.to });
+  const from = query.recordedAt?.$gte, to = query.recordedAt?.$lte;
+  if (!from || !to || !Number.isFinite(+from) || !Number.isFinite(+to) || from > to) throw new AppError('Valid from and to dates are required', 400);
+  const history = await healthModel.getDailyHealthHistory(userId, { metricType, from, to });
+  const series = [];
+  const cursor = new Date(filters.from + 'T00:00:00+05:30');
+  const last = new Date(filters.to + 'T00:00:00+05:30');
+  while (require('./daily-rules').dayKey(cursor) <= filters.to) {
+    const date = require('./daily-rules').dayKey(cursor);
+    const matching = history.filter(item => item.date === date);
+    if (matching.length) {
+      for (const item of matching) series.push({ date, value: item.value, unit: item.unit, ...(item.component ? { component: item.component } : {}), count: item.count });
+    } else series.push({ date, value: null, unit: require('./health-metrics').METRIC_UNITS[metricType], count: 0 });
+    cursor.setTime(cursor.getTime() + 86400000);
+  }
+  return { metricType, from: filters.from, to: filters.to, timezone: 'Asia/Kolkata', series };
+};
+
 const getDashboard = async (userId) => {
   return healthModel.getDashboardByUserId(userId);
 };
@@ -296,6 +317,7 @@ module.exports = {
   getRecords,
   getRecordsPage,
   getDailyHistory,
+  getTrends,
   getSummary,
   getDashboard
 };

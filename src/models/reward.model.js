@@ -335,6 +335,7 @@ const markRedemptionUsed = async (id, { partnerId, staffId = null, staffEmail = 
 module.exports = {
   Reward,
   Redemption,
+  memoryRedemptions: redemptions,
   VoucherCode,
   getActiveRewards,
   findRewardById,

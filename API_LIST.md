@@ -76,7 +76,7 @@ Registration example:
 {"deviceType":"phone","deviceIdentifier":"android-device-001","manufacturer":"Samsung","model":"Galaxy","platform":"android"}
 ```
 
-## 3. Health data — 5 APIs (User)
+## 3. Health data — 8 APIs (User)
 
 | Method | Path | Kaam / input |
 |---|---|---|
@@ -85,6 +85,7 @@ Registration example:
 | POST | `/health/steps/daily` | Compact Health Connect daily total: `{"date":"YYYY-MM-DD","steps":6420,"dataOrigin":"...","recordingMethod":"automatic","deviceId":"..."}`. Replaces that origin's total for the day; safe to retry. |
 | GET | `/health/records` | Apne records; optional `metricType`. Is endpoint par pagination/date filters implemented nahi hain; paginated list ke liye `/activity/records` use karein. |
 | GET | `/health/history` | Daily aggregated metric history; `metricType`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD` required. |
+| GET | `/health/trends` | Date-complete daily metric series; `metricType`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD` required. Missing dates return `value: null`; timezone is Asia/Kolkata. |
 | GET | `/health/summary` | Health metrics ka summary. |
 | GET | `/health/dashboard` | Dashboard ke liye combined data. |
 
@@ -108,7 +109,7 @@ Record ke required fields: `metricType`, `value`, `unit`, `recordedAt`, `source`
 
 Supported metrics: `steps`, `workout`, `meditation`, `water_checkin`, `sleep_checkin`, `running`, `walking`, `heart_rate`, `sleep`, `oxygen_saturation`, `weight`, `blood_pressure`, `calories`, `distance`, `active_minutes`.
 
-`/health/sync` identifies each record by `(userId, source, sourceRecordId)`. Re-sending the same record with the same or lower `sourceVersion` is a duplicate; a higher version updates that existing record, and the response counts it under `updated` rather than `created`. After a successful sync batch, the backend removes that user's `health_connect` records older than the rolling 7-day window (`recordedAt < now - 168 hours`). Other record sources are not pruned. Records needed by a pending daily-points settlement are kept until settlement completes. This cleanup runs on sync requests; it is not a scheduled job.
+`/health/sync` identifies each record by `(userId, source, sourceRecordId)`. Re-sending the same record with the same or lower `sourceVersion` is a duplicate; a higher version updates that existing record, and the response counts it under `updated` rather than `created`. The backend preserves historical synced Health Connect records; `pruned` remains zero. The API does not currently provide a Health Connect change-token endpoint.
 
 `POST /health/steps/daily` accepts one JSON object, not a `records` array. Required fields: `date` (Asia/Kolkata `YYYY-MM-DD`), integer `steps` (0–200000), and `dataOrigin`; optional `recordingMethod` (`automatic` or `active`) and registered `deviceId`. It stores one daily steps record per user, date, and origin. Repeating the call replaces that origin's previous daily total, rather than adding it, and queues normal daily settlement. Android must call this endpoint explicitly to use the compact format; `/health/sync` continues to accept detailed records. This backend cannot aggregate Health Connect data until the device sends the daily total; Android owns Health Connect reads and sync scheduling.
 
@@ -176,6 +177,9 @@ Yahan `:id` user ka **internal `id`** hai; `USR-...` wala permanent `publicId` l
 | Method | Path | Kaam / input |
 |---|---|---|
 | GET | `/admin/overview` | User/record/device counts aur recent records. |
+| GET | `/admin/analytics?from=YYYY-MM-DD&to=YYYY-MM-DD` | Full admin only. IST date-wise registrations, health record volume, reward redemptions aur totals. Date filters optional. |
+| GET | `/admin/audit-logs?page=1&limit=20&userId=...&action=...&from=YYYY-MM-DD&to=YYYY-MM-DD` | Full admin only. Paginated audit history; filters optional. |
+| PATCH | `/admin/administrators/:id/permissions` | Full admin only. Body: `{"permissions":["users:read","records:read","devices:read","challenges:read","activity:import","data:export"]}`. Empty list revokes all sub-admin access. |
 | GET | `/admin/users` | Paginated users; `page`, `limit`, `q`, `from`, `to`, `status`. |
 | GET | `/admin/records` | Paginated records; `page`, `limit`, `q`, `from`, `to`, `userId`, `metricType`. |
 | GET | `/admin/devices` | Paginated devices; `page`, `limit`, `q`, `from`, `to`, `userId`, `status`, `platform`, `model`. |
@@ -192,6 +196,8 @@ Yahan `:id` user ka **internal `id`** hai; `USR-...` wala permanent `publicId` l
 | POST | `/admin/ticket-rewards/claims/:id/send` | Consent ke baad ticket issue karein: `ticketDate` (`YYYY-MM-DD`), `ticketNumber`, `image`, optional `ticketCount`/`bookingReference`. Image email hoti hai aur encrypted form mein user app mein dekhne ke liye save hoti hai. |
 | GET | `/admin/users/:id` | Profile, wallet, record/device counts aur `canChangeStatus`. |
 | PATCH | `/admin/users/:id/status` | Body: `{"status":"ACTIVE"}` ya `{"status":"SUSPENDED"}`. Self/admin accounts ka status yahan change nahi hota. Status change existing sessions revoke karta hai. |
+| POST | `/admin/users/bulk-status` | Full admin only. Body `{"ids":["<internal-user-id>"],"status":"SUSPENDED"}`; 1–100 IDs. Response includes per-ID success/error so partial results can be handled. Admin accounts are skipped. |
+| PATCH | `/admin/devices/:id/status` | Full admin only. Body `{"status":"ACTIVE"}` or `{"status":"REMOVED"}`; status change is audited. |
 | GET | `/admin/users/:id/steps` | Date-wise reported/counted steps; `page`, `limit`, `from`, `to`. |
 | GET | `/admin/users/:id/daily` | User ke daily coins/progress; optional `day=YYYY-MM-DD`. |
 | GET | `/admin/users/:id/settlements` | Daily settlement breakdown; `page`, `limit`, `from`, `to`. |
@@ -200,6 +206,8 @@ Yahan `:id` user ka **internal `id`** hai; `USR-...` wala permanent `publicId` l
 | GET | `/admin/coin-rules` | Current/latest/baseline coin rules aur version history; `page`, `limit`. |
 | POST | `/admin/coin-rules` | New rule version schedule karein; `baseVersion`, `note`, complete `rules` object. |
 | GET | `/admin/settlements/status` | Worker enabled state, timezone, batch/concurrency aur state counts. |
+| GET | `/admin/settlements/queue?page=1&limit=20&state=RETRY` | Full admin only. Pending/retrying/processing user-day settlements with attempt count and next attempt time. `state` optional. |
+| POST | `/admin/settlements/:id/retry` | Full admin only. Queue a retry immediately for a pending/retrying/processing settlement. No body. |
 
 `/admin/coin-rules` ke GET aur POST alag APIs hain.
 

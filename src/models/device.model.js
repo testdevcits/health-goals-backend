@@ -114,6 +114,16 @@ const removeDevice = async (userId, id) => {
   return device ? toDevice(device) : null;
 };
 
+const setAdminDeviceStatus = async (id, status) => {
+  if (!env.useMongoDB) {
+    const row = devices.find(device => device.id === id);
+    if (!row) return null;
+    row.status = status; row.updated_at = new Date().toISOString(); return toDevice(row);
+  }
+  const row = await Device.findByIdAndUpdate(id, { status }, { new: true });
+  return row ? toDevice(row) : null;
+};
+
 const touchDeviceSync = async (userId, deviceIdentifier) => {
   if (!deviceIdentifier) return;
 
@@ -155,6 +165,7 @@ module.exports = {
   createDevice,
   getDevicesByUserId,
   removeDevice,
+  setAdminDeviceStatus,
   touchDeviceSync,
   userOwnsDevice
 };

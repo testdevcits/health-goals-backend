@@ -122,5 +122,50 @@ test('suspension revokes sessions permanently and admins cannot suspend themselv
  assert.equal((await request('/auth/me',null,userToken)).status,401);
  const start=await request('/auth/login',{email:'user@example.com',password:'password123'});
  const login=await request('/auth/verify-otp',{challengeId:start.data.challengeId,otp:delivered.get('user@example.com')});
- assert.equal(login.status,200);assert.equal((await request('/auth/me',null,login.data.accessToken)).status,200);
+ assert.equal(login.status,200);userToken=login.data.accessToken;assert.equal((await request('/auth/me',null,userToken)).status,200);
+});
+
+async function requestMethod(path, method, body, token) {
+ const res=await fetch(base+path,{method,headers:{...(body?{'Content-Type':'application/json'}:{}),...(token?{Authorization:`Bearer ${token}`}:{})},...(body?{body:JSON.stringify(body)}:{})});
+ return {status:res.status,...await res.json()};
+}
+test('admin operations analytics, audit filters, bulk user status, and device status are enforced',async()=>{
+ const user=await users.findUserByEmail('user@example.com');
+ const analytics=await request('/admin/analytics?from=2026-01-01&to=2026-12-31',null,adminToken);
+ assert.equal(analytics.status,200);assert.equal(analytics.data.timezone,'Asia/Kolkata');assert.ok(Array.isArray(analytics.data.records));
+ const audit=await request(`/admin/audit-logs?userId=${user.id}&limit=5`,null,adminToken);
+ assert.equal(audit.status,200);assert.ok(audit.data.items.length<=5);assert.equal(audit.data.page,1);
+ assert.equal((await request('/admin/audit-logs',null,userToken)).status,403);
+ const deviceModel=require('../src/models/device.model');const device=await deviceModel.createDevice(user.id,{deviceType:'phone',deviceIdentifier:'admin-ops-device',platform:'android',model:'Test Phone'});
+ assert.equal((await request('/admin/devices',null,userToken)).status,403);
+ const removed=await requestMethod(`/admin/devices/${device.id}/status`,'PATCH',{status:'REMOVED'},adminToken);
+ assert.equal(removed.status,200);assert.equal(removed.data.device.status,'REMOVED');
+ const bulk=await request('/admin/users/bulk-status',{ids:[user.id,'missing-user-id'],status:'SUSPENDED'},adminToken);
+ assert.equal(bulk.status,200);assert.equal(bulk.data.succeeded,1);assert.equal(bulk.data.failed,1);assert.equal(bulk.data.results[0].status,'SUSPENDED');
+ assert.equal((await request('/admin/users/bulk-status',{ids:[user.id],status:'REMOVED'},adminToken)).status,400);
+});
+test('settlement queue exposes retryable jobs and queues admin retry safely',async()=>{
+ const user=await users.findUserByEmail('user@example.com');
+ const daily=require('../src/services/daily-settlement.service');
+ await daily.enqueue(user.id,'2020-01-02');
+ const queue=await request('/admin/settlements/queue?state=PENDING',null,adminToken);
+ assert.equal(queue.status,200);const row=queue.data.items.find(item=>item.day==='2020-01-02'&&item.user?.id===user.id);assert.ok(row);
+ const retried=await request(`/admin/settlements/${row.id}/retry`,{},adminToken);
+ assert.equal(retried.status,200);
+ const processing=require('../src/models/daily-activity.model').memoryDays.get(`${user.id}:2020-01-02`);
+ processing.state='PROCESSING';processing.lockUntil=new Date(Date.now()+60000);processing.leaseToken='active-lease';
+ assert.equal((await request(`/admin/settlements/${row.id}/retry`,{},adminToken)).status,404);
+ assert.equal((await request(`/admin/settlements/${row.id}/retry`,{},userToken)).status,401);
+});
+test('full admin can scope sub-admin permissions and sub-admin routes honor them',async()=>{
+ const created=await request('/admin/administrators',{name:'Scoped Admin',email:'scoped-admin@example.com',password:'temporary-pass-123'},adminToken);
+ assert.equal(created.status,201);const id=created.data.administrator.id;
+ const saved=await requestMethod(`/admin/administrators/${id}/permissions`,'PATCH',{permissions:['records:read']},adminToken);
+ assert.equal(saved.status,200);assert.deepEqual(saved.data.administrator.adminPermissions,['records:read']);
+ const start=await request('/auth/login',{identifier:'scoped-admin@example.com',password:'temporary-pass-123'});
+ assert.equal(start.status,202);const login=await request('/auth/verify-otp',{challengeId:start.data.challengeId,otp:delivered.get('scoped-admin@example.com')});
+ assert.equal(login.status,200);assert.equal((await request('/admin/records',null,login.data.accessToken)).status,200);assert.equal((await request('/admin/users',null,login.data.accessToken)).status,403);
+ const ordinary=await request('/auth/register',{name:'Ordinary',email:'ordinary-access@example.com',password:'password123'});
+ const ordinaryLogin=await request('/auth/verify-otp',{challengeId:ordinary.data.challengeId,otp:delivered.get('ordinary-access@example.com')});
+ assert.equal((await requestMethod(`/admin/administrators/${id}/permissions`,'PATCH',{permissions:[]},ordinaryLogin.data.accessToken)).status,403);
 });

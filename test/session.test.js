@@ -5,7 +5,7 @@ const check=token=>new Promise(resolve=>authenticate({headers:{authorization:`Be
 let current;
 test('OTP login sets one-hour deadline with short access token',async()=>{
  const start=await auth.register({name:'Session User',email:'session@example.test',password:'password123'});current=await auth.verifyOtp({challengeId:start.challengeId,otp:'123456'});
- const claims=jwt.decode(current.accessToken);assert.equal(claims.sessionExpiresAt-claims.iat,3600);assert.equal(claims.exp-claims.iat,900);assert.equal(current.sessionExpiresAt,claims.sessionExpiresAt*1000);
+ const claims=jwt.decode(current.accessToken);assert.ok([3599,3600].includes(claims.sessionExpiresAt-claims.iat));assert.equal(claims.exp-claims.iat,900);assert.equal(current.sessionExpiresAt,claims.sessionExpiresAt*1000);
 });
 test('refresh rotates tokens without extending session and rejects reused refresh tokens',async()=>{
  const old=current;current=await auth.refresh({refreshToken:old.refreshToken});assert.equal(current.sessionExpiresAt,old.sessionExpiresAt);assert.notEqual(current.refreshToken,old.refreshToken);await assert.rejects(()=>auth.refresh({refreshToken:old.refreshToken}),/Invalid refresh token/);

@@ -53,6 +53,7 @@ const userSchema = new mongoose.Schema(
       enum: ['USER', 'ADMIN', 'SUB_ADMIN'],
       default: 'USER'
     },
+    adminPermissions: { type: [String], default: null },
     refreshTokenHash: {
       type: String,
       default: null
@@ -88,6 +89,7 @@ const toPublicUser = (user) => ({
   authVersion: user.authVersion || 0,
   status: user.status || 'ACTIVE',
   role: user.role || 'USER',
+  adminPermissions: user.adminPermissions ?? user.admin_permissions ?? null,
   lastLoginAt: user.lastLoginAt || user.last_login_at || null,
   createdAt: user.createdAt || user.created_at,
   updatedAt: user.updatedAt || user.updated_at
@@ -101,7 +103,7 @@ const toAuthUser = (user) => ({
 
 const toProfileUser = user => ({ ...toPublicUser(user), phone: user.encryptedPhone ? require('../services/voucher-code.service').decrypt(user.encryptedPhone) : '' });
 
-const createUser = async ({ name, email, passwordHash, role = 'USER', companyCode = '', goal = '' }) => {
+const createUser = async ({ name, email, passwordHash, role = 'USER', companyCode = '', goal = '', adminPermissions = null }) => {
   const publicId = `USR-${crypto.randomBytes(6).toString('hex').toUpperCase()}`;
   if (!env.useMongoDB) {
     const now = new Date().toISOString();
@@ -115,6 +117,7 @@ const createUser = async ({ name, email, passwordHash, role = 'USER', companyCod
       password_hash: passwordHash,
       status: 'ACTIVE',
       role,
+      admin_permissions: adminPermissions,
       refresh_token_hash: null,
       last_login_at: null,
       created_at: now,
@@ -132,7 +135,8 @@ const createUser = async ({ name, email, passwordHash, role = 'USER', companyCod
     goal,
     email,
     passwordHash,
-    role
+    role,
+    adminPermissions: role === 'SUB_ADMIN' ? null : adminPermissions
   });
 
   return toPublicUser(user);
@@ -225,6 +229,10 @@ module.exports = {
     const user = users.find(row => row.id === id);
     if (user && user.status !== status) { user.status = status; user.authVersion = (user.authVersion || 0) + 1; user.refresh_token_hash = null; user.updated_at = new Date().toISOString(); }
     return user ? toPublicUser(user) : null;
+  },
+  updateAdminPermissions: async (id, adminPermissions) => {
+    if (env.useMongoDB) { const user=await User.findOneAndUpdate({_id:id,role:'SUB_ADMIN'},{$set:{adminPermissions}},{new:true});return user?toPublicUser(user):null; }
+    const user=users.find(row=>row.id===id&&row.role==='SUB_ADMIN');if(!user)return null;user.admin_permissions=[...adminPermissions];user.updated_at=new Date().toISOString();return toPublicUser(user);
   },
   listUsers: async () => env.useMongoDB ? (await User.find().sort({ createdAt: -1 }).lean()).map(toPublicUser) : users.map(toPublicUser),
   listAdministrators: async () => {
