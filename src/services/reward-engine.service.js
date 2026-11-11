@@ -74,6 +74,8 @@ async function evaluate(now=new Date()){
 }
 async function forUser(userId){
  const allRuns=await runs();
+ const users=await require('../models/user.model').listUsers();
+ const userById=new Map(users.map(user=>[String(user.id),user]));
  const history=allRuns.filter(run=>run.participants.some(row=>row.userIds.includes(String(userId))));
  const active=new Set((await rules.list()).items.filter(rule=>rule.status==='ACTIVE').map(rule=>rule.id));
  for(const run of history){
@@ -85,6 +87,7 @@ async function forUser(userId){
   // Comparison rank is a display statistic; per-rule winner awards remain separate.
   const index=history.findIndex(item=>item.key===run.key);history[index]={...run,rows:combined};
  }
- return {competitions:history.map(run=>({id:run.key,title:run.rule.title,ruleType:run.rule.ruleType,audience:run.rule.audience,metric:run.rule.metric,targetValue:run.rule.targetValue,start:run.start,end:run.end,status:run.finalizedAt?'FINAL':active.has(run.ruleId)?'LIVE':'PAUSED',leaderboard:(run.rows||[]).slice(0,20).map(({userIds,...row})=>row),myProgress:(run.rows||[]).filter(row=>row.userIds.includes(String(userId))).map(({userIds,...row})=>row)})),achievements:await achievements(userId)};
+ const withProfileImage=({userIds,...row})=>({...row,profileImageUrl:userById.get(String(row.id))?.profileImageUrl||''});
+ return {competitions:history.map(run=>({id:run.key,title:run.rule.title,ruleType:run.rule.ruleType,audience:run.rule.audience,metric:run.rule.metric,targetValue:run.rule.targetValue,start:run.start,end:run.end,status:run.finalizedAt?'FINAL':active.has(run.ruleId)?'LIVE':'PAUSED',leaderboard:(run.rows||[]).slice(0,20).map(withProfileImage),myProgress:(run.rows||[]).filter(row=>row.userIds.includes(String(userId))).map(withProfileImage)})),achievements:await achievements(userId)};
 }
 module.exports={Run,Award,evaluate,forUser,progress,snapshot,achievements};
