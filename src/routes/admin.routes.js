@@ -297,7 +297,18 @@ router.get('/users/:id',async(req,res,next)=>{
   try{
     const user=await findUser(req.params.id);
     const [points,records,devices,definitions]=await Promise.all([wallet.findWallet(user.id),query.list('records',{userId:user.id,limit:1}),query.list('devices',{userId:user.id,limit:1}),require('../models/profile-question.model').list()]);
-    const profileAnswers=definitions.filter(question=>Object.prototype.hasOwnProperty.call(user.profileAnswers||{},question.key)&&user.profileAnswers[question.key]!==null&&user.profileAnswers[question.key]!=='').map(question=>({key:question.key,label:question.label,value:user.profileAnswers[question.key]}));
+    const savedAnswers=user.profileAnswers instanceof Map?Object.fromEntries(user.profileAnswers):user.profileAnswers||{};
+    const legacyAnswers={gender:user.gender,birthDate:user.birthDate,heightCm:user.heightCm,weightKg:user.weightKg};
+    const questionByKey=new Map(definitions.map(question=>[question.key,question]));
+    const answerKeys=[...definitions.map(question=>question.key),...Object.keys(savedAnswers).filter(key=>!questionByKey.has(key)).sort()];
+    const profileAnswers=[...new Set(answerKeys)].map(key=>{
+      const saved=savedAnswers[key];
+      const value=saved!==null&&saved!==undefined&&saved!==''?saved:legacyAnswers[key];
+      if(value===null||value===undefined||value==='')return null;
+      const question=questionByKey.get(key);
+      const label=question?.label||key.replace(/([a-z])([A-Z])/g,'$1 $2').replace(/[_-]+/g,' ').replace(/^./,character=>character.toUpperCase());
+      return {key,label,value};
+    }).filter(Boolean);
     successResponse(res,200,'User details',{user,profileAnswers,wallet:points,recordCount:records.total,deviceCount:devices.total,canChangeStatus:req.adminRole==='ADMIN'&&user.id!==req.user.id&&!env.adminEmails.includes(user.email.toLowerCase())});
   }catch(error){next(error);}
 });
