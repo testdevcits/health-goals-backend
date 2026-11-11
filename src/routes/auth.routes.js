@@ -14,6 +14,8 @@ router.post('/google', authLimiter, authController.google);
 router.post('/refresh', authLimiter, authController.refresh);
 router.post('/logout', authenticate, authController.logout);
 router.get('/me', authenticate, authController.me);
+router.get('/me/profile-questions', authenticate, authController.profileQuestions);
+router.patch('/me/profile-answers', authenticate, authController.saveProfileAnswers);
 router.patch('/me', authenticate, authController.updateProfile);
 router.patch('/me/goals', authenticate, authController.updateHealthGoal);
 router.post('/me/profile-image', authenticate, authController.uploadProfileImage);

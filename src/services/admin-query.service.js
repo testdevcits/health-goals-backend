@@ -5,7 +5,7 @@ const health = require('../models/health.model');
 const devices = require('../models/device.model');
 const { AppError } = require('../middleware/error.middleware');
 const configs = {
-  users: { model: users.User, read: users.listUsers, time: 'createdAt', fields: ['name','email','publicId'], projection: '-passwordHash -refreshTokenHash', convert: users.toPublicUser },
+  users: { model: users.User, read: users.listUsers, time: 'createdAt', fields: ['name','email','publicId','gender'], projection: '-passwordHash -refreshTokenHash -profileAnswers', convert: users.toPublicUser },
   records: { model: health.HealthRecord, read: health.listAdmin, time: 'recordedAt', fields: ['metricType','source','sourceRecordId'], convert: row => ({ ...row, id: String(row._id), _id: undefined, __v: undefined }) },
   devices: { model: devices.Device, read: devices.listAdmin, time: 'createdAt', fields: ['model','manufacturer','deviceType','deviceIdentifier','platform'], convert: row => ({ ...row, id: String(row._id), _id: undefined, __v: undefined }) }
 };
@@ -29,6 +29,30 @@ function buildQuery(kind, params = {}) {
   if (params.metricType) {
     if (typeof params.metricType !== 'string' || params.metricType.length>40) throw new AppError('Invalid metric',400);
     query.metricType = params.metricType;
+  }
+  if (kind === 'users') {
+    if (params.gender) {
+      if (typeof params.gender !== 'string' || params.gender.length > 100) throw new AppError('Invalid gender filter',400);
+      query.gender = params.gender;
+    }
+    const range = (key,min,max) => {
+      if (params[key] === undefined || params[key] === '') return undefined;
+      const value = Number(params[key]);
+      if (!Number.isFinite(value) || value < min || value > max) throw new AppError(`Invalid ${key} filter`,400);
+      return value;
+    };
+    const minAge=range('minAge',0,120),maxAge=range('maxAge',0,120);
+    const minWeightKg=range('minWeightKg',20,500),maxWeightKg=range('maxWeightKg',20,500);
+    const minHeightCm=range('minHeightCm',50,300),maxHeightCm=range('maxHeightCm',50,300);
+    if(minAge!==undefined&&maxAge!==undefined&&minAge>maxAge)throw new AppError('Minimum age cannot exceed maximum age',400);
+    if(minWeightKg!==undefined&&maxWeightKg!==undefined&&minWeightKg>maxWeightKg)throw new AppError('Minimum weight cannot exceed maximum weight',400);
+    if(minHeightCm!==undefined&&maxHeightCm!==undefined&&minHeightCm>maxHeightCm)throw new AppError('Minimum height cannot exceed maximum height',400);
+    for(const [field,lower,upper] of [['weightKg',minWeightKg,maxWeightKg],['heightCm',minHeightCm,maxHeightCm]]) if(lower!==undefined||upper!==undefined) query[field]={...(lower!==undefined?{$gte:lower}:{}),...(upper!==undefined?{$lte:upper}:{})};
+    if(minAge!==undefined||maxAge!==undefined){
+      const dob={$dateFromString:{dateString:'$birthDate',format:'%d/%m/%Y',onError:null,onNull:null}};
+      const age={$subtract:[{$subtract:[{$year:{date:'$$NOW',timezone:'Asia/Kolkata'}},{$year:{date:'$$dob',timezone:'Asia/Kolkata'}}]},{$cond:[{$lt:[{$dateToString:{date:'$$NOW',format:'%m%d',timezone:'Asia/Kolkata'}},{$dateToString:{date:'$$dob',format:'%m%d',timezone:'Asia/Kolkata'}}]},1,0]}]};
+      query.$expr={$let:{vars:{dob},in:{$and:[{$ne:['$$dob',null]},...(minAge!==undefined?[{$gte:[age,minAge]}]:[]),...(maxAge!==undefined?[{$lte:[age,maxAge]}]:[])]}}};
+    }
   }
   if (kind === 'devices') {
     for (const key of ['platform','model']) {
@@ -81,14 +105,19 @@ async function list(kind, params = {}) {
   } else {
     const q=String(params.q || '').trim().toLowerCase();
     const rows=(await config.read()).filter(row => (!params.userId || String(row.userId)===params.userId) && (!params.status || row.status===params.status) && (!params.metricType || row.metricType===params.metricType) && (kind !== 'devices' || ((!params.platform || row.platform===params.platform) && (!params.model || row.model===params.model))) &&
+      (kind !== 'users' || (!params.gender || row.gender===params.gender) && inAgeRange(row.birthDate||row.birth_date,params.minAge,params.maxAge) && inNumericRange(row.weightKg??row.weight_kg,params.minWeightKg,params.maxWeightKg) && inNumericRange(row.heightCm??row.height_cm,params.minHeightCm,params.maxHeightCm)) &&
       (!q || [...config.fields,'id','userId'].some(f=>String(row[f] || '').toLowerCase().includes(q))) &&
       (!query[config.time]?.$gte || new Date(row[config.time])>=query[config.time].$gte) && (!query[config.time]?.$lte || new Date(row[config.time])<=query[config.time].$lte))
       .sort((a,b)=>new Date(b[config.time])-new Date(a[config.time]) || String(b.id).localeCompare(String(a.id)));
     total=rows.length;items=rows.slice((page-1)*limit,page*limit);
   }
-  if (kind === 'users') items = items.map(user => ({...user,isAdmin:env.adminEmails.includes(String(user.email||'').toLowerCase()) || ['ADMIN','SUB_ADMIN'].includes(user.role)}));
+  if (kind === 'users') items = items.map(user => {const {profileAnswers,birthDate,birth_date,...safeUser}=user;return {...safeUser,age:ageFromBirthDate(birthDate||birth_date),isAdmin:env.adminEmails.includes(String(user.email||'').toLowerCase()) || ['ADMIN','SUB_ADMIN'].includes(user.role)};});
   else items = await attachUsers(items);
-  let deviceFilters;
+  let deviceFilters, userFilters;
+  if (kind === 'users') {
+    const genders = env.useMongoDB ? await users.User.distinct('gender') : (await config.read()).map(user => user.gender);
+    userFilters = { genders: [...new Set(genders.filter(value => typeof value === 'string' && value))].sort((a,b) => a.localeCompare(b)) };
+  }
   if (kind === 'devices') {
     // Read distinct registered combinations across all pages, independent of search.
     const scope = query.userId ? { userId: query.userId } : {};
@@ -101,8 +130,12 @@ async function list(kind, params = {}) {
     }
     deviceFilters = [...unique.values()].sort((a,b) => a.model.localeCompare(b.model));
   }
-  return {items,total,page,limit,totalPages:Math.ceil(total/limit), ...(deviceFilters ? { deviceFilters } : {})};
+  return {items,total,page,limit,totalPages:Math.ceil(total/limit), ...(deviceFilters ? { deviceFilters } : {}), ...(userFilters ? { userFilters } : {})};
 }
+function inNumericRange(value,min,max){if((min===undefined||min==='')&&(max===undefined||max===''))return true;if(value===null||value===undefined||value==='')return false;const number=Number(value);return (min===undefined||min===''||number>=Number(min))&&(max===undefined||max===''||number<=Number(max));}
+function calculateAge(value){if(!value)return null;const match=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);if(!match)return null;const [,d,m,y]=match,parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()),today=Object.fromEntries(parts.map(part=>[part.type,Number(part.value)])),birth=new Date(Number(y),Number(m)-1,Number(d));if(birth.getFullYear()!==Number(y)||birth.getMonth()!==Number(m)-1||birth.getDate()!==Number(d))return null;let age=today.year-birth.getFullYear();if(today.month<Number(m)||(today.month===Number(m)&&today.day<Number(d)))age--;return age<0||age>120?null:age;}
+function inAgeRange(value,min,max){if((min===undefined||min==='')&&(max===undefined||max===''))return true;const age=calculateAge(value);return age!==null&&(min===undefined||min===''||age>=Number(min))&&(max===undefined||max===''||age<=Number(max));}
+function ageFromBirthDate(value){return calculateAge(value);}
 async function overview() {
   if(env.useMongoDB) {
     const today=new Date();today.setUTCHours(0,0,0,0);

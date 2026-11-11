@@ -37,6 +37,42 @@ router.use(async(req,res,next)=>{try{
 }catch(error){next(error);}});
 const coinRules=require('../services/coin-rules.service');
 const rewardRules=require('../services/reward-rule.service');
+const profileQuestions=require('../models/profile-question.model');
+function validateProfileQuestion(body, partial=false){
+  const input=body||{}, result={};
+  if(!partial||input.label!==undefined){const label=String(input.label||'').trim();if(!label||label.length>120)throw new AppError('Question label must be 1 to 120 characters',400);result.label=label;}
+  if(!partial||input.type!==undefined){const type=input.type;if(!['text','number','select','date'].includes(type))throw new AppError('Question type must be text, number, select, or date',400);result.type=type;}
+  if(input.options!==undefined||result.type==='select'){
+    const options=Array.isArray(input.options)?input.options.map(value=>String(value).trim()).filter(Boolean):[];
+    if((input.type||result.type)==='select'&&(options.length<2||options.length>20||options.some(value=>value.length>80)))throw new AppError('Select questions need 2 to 20 options of at most 80 characters',400);
+    result.options=options;
+  }
+  if(input.required!==undefined){if(typeof input.required!=='boolean')throw new AppError('required must be boolean',400);result.required=input.required;}
+  if(input.order!==undefined){const order=Number(input.order);if(!Number.isInteger(order)||order<0||order>10000)throw new AppError('order must be a whole number from 0 to 10000',400);result.order=order;}
+  if(input.active!==undefined){if(typeof input.active!=='boolean')throw new AppError('active must be boolean',400);result.active=input.active;}
+  return result;
+}
+router.get('/profile-questions',fullAdminOnly,async(req,res,next)=>{try{successResponse(res,200,'Profile questions fetched',{questions:await profileQuestions.list()});}catch(error){next(error);}});
+router.post('/profile-questions',fullAdminOnly,adminWriteLimiter,async(req,res,next)=>{try{
+  const key=String(req.body?.key||'').trim().toLowerCase();if(!/^[a-z][a-z0-9_]{1,39}$/.test(key))throw new AppError('Question key must be 2 to 40 lowercase letters, numbers, or underscores',400);
+  const question=await profileQuestions.create({key,...validateProfileQuestion(req.body)});if(!question)throw new AppError('A question with that key already exists',409);
+  await audit.createAuditLog({userId:req.user.id,action:'ADMIN_PROFILE_QUESTION_CREATED',metadata:{questionId:question.id,key},requestId:req.requestId});
+  successResponse(res,201,'Profile question created',{question});
+}catch(error){if(error.code===11000)error=new AppError('A question with that key already exists',409);next(error);}});
+router.patch('/profile-questions/:id',fullAdminOnly,adminWriteLimiter,async(req,res,next)=>{try{
+  const updates=validateProfileQuestion(req.body,true);if(!Object.keys(updates).length)throw new AppError('Provide question fields to update',400);
+  const existing=(await profileQuestions.list()).find(item=>item.id===req.params.id);if(!existing)throw new AppError('Profile question not found',404);
+  const fixedTypes={gender:'select',birthDate:'date',heightCm:'number',weightKg:'number'};
+  if(fixedTypes[existing.key]&&updates.type&&updates.type!==fixedTypes[existing.key])throw new AppError(`The ${existing.key} question type is fixed`,400);
+  const question=await profileQuestions.update(req.params.id,updates);if(!question)throw new AppError('Profile question not found',404);
+  await audit.createAuditLog({userId:req.user.id,action:'ADMIN_PROFILE_QUESTION_UPDATED',metadata:{questionId:question.id,key:question.key,changes:Object.keys(updates)},requestId:req.requestId});
+  successResponse(res,200,'Profile question updated',{question});
+}catch(error){next(error);}});
+router.delete('/profile-questions/:id',fullAdminOnly,adminWriteLimiter,async(req,res,next)=>{try{
+  const question=await profileQuestions.setActive(req.params.id,false);if(!question)throw new AppError('Profile question not found',404);
+  await audit.createAuditLog({userId:req.user.id,action:'ADMIN_PROFILE_QUESTION_DEACTIVATED',metadata:{questionId:question.id,key:question.key},requestId:req.requestId});
+  successResponse(res,200,'Profile question deactivated',{question});
+}catch(error){next(error);}});
 router.get('/administrators',fullAdminOnly,async(req,res,next)=>{try{
   const items=await users.listAdministrators();
   const activity=(await audit.listAuditLogs({limit:250})).items;
@@ -96,7 +132,7 @@ router.post('/administrators',fullAdminOnly,adminWriteLimiter,async(req,res,next
 router.get('/data-export',async(req,res,next)=>{try{
   const kind=['users','records','devices'].includes(req.query.kind)?req.query.kind:'records';
   const result=await query.list(kind,{...req.query,page:1,limit:100});
-  const columns=kind==='users'?['name','email','publicId','status','role','createdAt']:kind==='devices'?['model','manufacturer','platform','status','lastSyncAt','user']:['metricType','value','unit','recordedAt','source','user'];
+  const columns=kind==='users'?['name','email','publicId','gender','age','heightCm','weightKg','status','role','createdAt']:kind==='devices'?['model','manufacturer','platform','status','lastSyncAt','user']:['metricType','value','unit','recordedAt','source','user'];
   const quote=value=>`"${String(value??'').replace(/"/g,'""')}"`;
   const csv=[columns.join(','),...result.items.map(row=>columns.map(column=>quote(column==='user'?(row.user?.email||row.user?.name||''):row[column])).join(','))].join('\n');
   res.setHeader('Content-Type','text/csv; charset=utf-8');res.setHeader('Content-Disposition',`attachment; filename="health-${kind}.csv"`);res.status(200).send(csv);
@@ -260,8 +296,9 @@ async function findUser(id) {
 router.get('/users/:id',async(req,res,next)=>{
   try{
     const user=await findUser(req.params.id);
-    const [points,records,devices]=await Promise.all([wallet.findWallet(user.id),query.list('records',{userId:user.id,limit:1}),query.list('devices',{userId:user.id,limit:1})]);
-    successResponse(res,200,'User details',{user,wallet:points,recordCount:records.total,deviceCount:devices.total,canChangeStatus:req.adminRole==='ADMIN'&&user.id!==req.user.id&&!env.adminEmails.includes(user.email.toLowerCase())});
+    const [points,records,devices,definitions]=await Promise.all([wallet.findWallet(user.id),query.list('records',{userId:user.id,limit:1}),query.list('devices',{userId:user.id,limit:1}),require('../models/profile-question.model').list()]);
+    const profileAnswers=definitions.filter(question=>Object.prototype.hasOwnProperty.call(user.profileAnswers||{},question.key)&&user.profileAnswers[question.key]!==null&&user.profileAnswers[question.key]!=='').map(question=>({key:question.key,label:question.label,value:user.profileAnswers[question.key]}));
+    successResponse(res,200,'User details',{user,profileAnswers,wallet:points,recordCount:records.total,deviceCount:devices.total,canChangeStatus:req.adminRole==='ADMIN'&&user.id!==req.user.id&&!env.adminEmails.includes(user.email.toLowerCase())});
   }catch(error){next(error);}
 });
 router.get('/users/:id/record-chart',async(req,res,next)=>{try{const user=await findUser(req.params.id);successResponse(res,200,'All-date activity chart',await require('../services/record-chart.service').chart(user.id,req.query));}catch(error){next(error);}});

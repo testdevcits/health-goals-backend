@@ -55,6 +55,67 @@ const register = async ({ name, email, password, companyCode = '', goal = '', ad
   return otpService.request({ email, purpose: 'register', payload: { name: name.trim(), email, passwordHash, companyCode: companyCode.trim(), goal: goal.trim() } });
 };
 
+const getPendingProfileQuestions = async userId => {
+  const [user, questions] = await Promise.all([
+    userModel.findUserById(userId),
+    require('../models/profile-question.model').list({ activeOnly: true })
+  ]);
+  if (!user) throw new AppError('User not found', 404);
+  const answers = user.profileAnswers || {};
+  const legacyFields = { gender: user.gender, birthDate: user.birthDate, heightCm: user.heightCm, weightKg: user.weightKg };
+  if (user.role !== 'USER') return [];
+  return questions.filter(question => {
+    if (Object.prototype.hasOwnProperty.call(answers, question.key)) return false;
+    return !(Object.prototype.hasOwnProperty.call(legacyFields, question.key) && legacyFields[question.key] !== undefined && legacyFields[question.key] !== null && legacyFields[question.key] !== '');
+  });
+};
+
+const saveProfileAnswers = async (userId, payload) => {
+  const { answers: incoming } = payload || {};
+  if (!incoming || typeof incoming !== 'object' || Array.isArray(incoming)) throw new AppError('answers must be an object', 400);
+  const questions = await require('../models/profile-question.model').list({ activeOnly: true });
+  const available = new Map(questions.map(question => [question.key, question]));
+  const existing = await userModel.findUserById(userId);
+  if (!existing) throw new AppError('User not found', 404);
+  const profileAnswers = { ...(existing.profileAnswers || {}) };
+  const profileFields = {};
+  for (const [key, raw] of Object.entries(incoming)) {
+    const question = available.get(key);
+    if (!question) throw new AppError(`Unknown or inactive profile question: ${key}`, 400);
+    if (raw === null || raw === '') {
+      if (question.required) throw new AppError(`${question.label} is required`, 400);
+      profileAnswers[key] = null;
+      if (['gender', 'birthDate', 'heightCm', 'weightKg'].includes(key)) profileFields[key] = key === 'gender' || key === 'birthDate' ? '' : null;
+      continue;
+    }
+    let value = raw;
+    if (question.type === 'number') {
+      value = Number(raw);
+      const bounds = key === 'heightCm' ? [50, 300] : key === 'weightKg' ? [20, 500] : [0, 10000000];
+      if (!Number.isFinite(value) || value < bounds[0] || value > bounds[1]) throw new AppError(`${question.label} is outside the allowed range`, 400);
+    } else {
+      if (typeof raw !== 'string' || raw.trim().length > (question.type === 'text' ? 500 : 120)) throw new AppError(`${question.label} must be valid text`, 400);
+      value = raw.trim();
+    }
+    if (question.type === 'select' && !question.options.includes(value)) throw new AppError(`Choose a valid answer for ${question.label}`, 400);
+    if (question.type === 'date') {
+      if (!/^\d{2}\/\d{2}\/\d{4}$/.test(value)) throw new AppError(`${question.label} must use DD/MM/YYYY`, 400);
+      const [day, month, year] = value.split('/').map(Number);
+      const date = new Date(Date.UTC(year, month - 1, day));
+      const now = new Date();
+      let age = now.getFullYear() - year;
+      if (now.getMonth() < month - 1 || (now.getMonth() === month - 1 && now.getDate() < day)) age -= 1;
+      if (date.getUTCDate() !== day || date.getUTCMonth() !== month - 1 || age < 0 || age > 120 || date > now) throw new AppError('Enter a valid date of birth no more than 120 years ago', 400);
+    }
+    profileAnswers[key] = value;
+    if (['gender', 'birthDate', 'heightCm', 'weightKg'].includes(key)) profileFields[key] = value;
+  }
+  if (!Object.keys(incoming).length) throw new AppError('Provide at least one profile answer', 400);
+  const user = await userModel.updateProfile(userId, { ...profileFields, profileAnswers });
+  if (!user) throw new AppError('User not found', 404);
+  return { user, pendingQuestions: await getPendingProfileQuestions(userId) };
+};
+
 const login = async ({ identifier, userId, email, password, admin = false }) => {
   const input = identifier ?? userId ?? email;
   if (typeof input !== 'string' || !input.trim() || input.length > 256 || typeof password !== 'string' || !password) {
@@ -192,7 +253,7 @@ const getCurrentUser = async (userId) => {
 
 const updateCurrentProfile = async (userId, payload) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new AppError('Profile details are required', 400);
-  const allowed = ['name', 'goal', 'heightCm', 'weightKg', 'birthDate', 'phone'];
+  const allowed = ['name', 'goal', 'heightCm', 'weightKg', 'birthDate', 'gender', 'phone'];
   const profile = {};
   for (const field of allowed) {
     if (payload[field] === undefined) continue;
@@ -209,6 +270,9 @@ const updateCurrentProfile = async (userId, payload) => {
       const digits = phone.replace(/\D/g, '');
       if (phone && (digits.length < 10 || digits.length > 15)) throw new AppError('phone must contain 10 to 15 digits', 400);
       profile.encryptedPhone = phone ? require('./voucher-code.service').encrypt(phone) : null;
+    } else if (field === 'gender') {
+      if (!['Woman', 'Man', 'Non-binary', 'Prefer not to say', ''].includes(value)) throw new AppError('gender is invalid', 400);
+      profile.gender = value;
     } else {
       if (typeof value !== 'string' || value.trim().length > (field === 'name' ? 100 : 500)) throw new AppError(`${field} must be text`, 400);
       if (field === 'name' && !value.trim()) throw new AppError('Name cannot be empty', 400);
@@ -265,5 +329,7 @@ module.exports = {
   getCurrentUser,
   updateCurrentProfile,
   updateCurrentHealthGoal,
-  updateCurrentDeviceProfile
+  updateCurrentDeviceProfile,
+  getPendingProfileQuestions,
+  saveProfileAnswers
 };

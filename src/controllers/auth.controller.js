@@ -28,6 +28,16 @@ const me = async (req, res, next) => {
   }
 };
 
+const profileQuestions = async (req, res, next) => {
+  try { return successResponse(res, 200, 'Pending profile questions fetched', { questions: await authService.getPendingProfileQuestions(req.user.id) }); }
+  catch (error) { next(error); }
+};
+
+const saveProfileAnswers = async (req, res, next) => {
+  try { return successResponse(res, 200, 'Profile answers saved', await authService.saveProfileAnswers(req.user.id, req.body)); }
+  catch (error) { next(error); }
+};
+
 const updateDeviceProfile = async (req, res, next) => {
   try {
     const user = await authService.updateCurrentDeviceProfile(req.user.id, req.body);
@@ -102,6 +112,8 @@ module.exports = {
   me,
   updateDeviceProfile,
   updateProfile,
+  profileQuestions,
+  saveProfileAnswers,
   updateHealthGoal,
   uploadProfileImage
 };
