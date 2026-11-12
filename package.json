@@ -9,10 +9,12 @@
     "dev": "nodemon src/server.js",
     "test": "node --test test/*.test.js",
     "db:clean:keep-admin": "node scripts/clean-db-keep-admin.js",
+    "db:reset": "node scripts/reset-db.js",
     "db:seed:demo": "node scripts/seed-demo-user.js",
     "db:seed:reward-rules": "node scripts/seed-reward-rules.js",
     "db:seed:ticket-fixture": "node scripts/seed-leaderboard-ticket-fixture.js",
-    "db:indexes:health": "node scripts/ensure-health-indexes.js"
+    "db:indexes:health": "node scripts/ensure-health-indexes.js",
+    "mail:verify": "node scripts/verify-smtp.js"
   },
   "keywords": [
     "health",

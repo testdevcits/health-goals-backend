@@ -45,7 +45,6 @@ This API is configured as a Vercel Express function. In Vercel, import the GitHu
 Required production variables:
 
 - `NODE_ENV=production`
-- `APP_MODE=live`
 - `USE_MONGODB=true`
 - `MONGODB_URI` — MongoDB Atlas connection string for a replica set or sharded cluster
 - `JWT_SECRET` and `JWT_REFRESH_SECRET` — two different long random secrets
@@ -258,6 +257,8 @@ A correct code returns the user, `token` (access-token alias), `accessToken`, an
 
 Configure `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS`, and `SMTP_FROM` in backend `.env`. Email is required: missing configuration returns 503, without exposing an OTP or issuing tokens. Use a provider-approved sender and credentials. Real email delivery must be verified after configuration.
 
+OTP verification and leaderboard-ticket emails use the shared branded HTML/text layout in `src/templates/email-layout.js`. To check SMTP credentials without sending an email, run `npm run mail:verify` from `backend`. For an end-to-end OTP check, configure SMTP, restart the backend, and register or log in with an inbox you can access; the six-digit code is sent to the account's verified email address. OTP delivery is hardcoded to live mode and does not depend on `APP_MODE`. `mail:verify` checks transport authentication only and does not validate delivery to a recipient inbox.
+
 Set `ADMIN_EMAILS` to a comma-separated server-controlled list of approved admin emails. Public registration never accepts a client-supplied role. The admin frontend adds `admin: true` to register/login requests to reject unapproved addresses early; admin APIs independently enforce the allowlist on every request.
 
 Admin endpoints, requiring an OTP-verified access token and approved email:
@@ -283,11 +284,9 @@ Run `npm test` for OTP, admin authorization, and app-sync integration coverage. 
 - MongoDB indexes are declared in model schemas. Ensure the new indexes have been built on existing deployed databases before assessing performance. Query counts and page retrieval run concurrently; totals may change during concurrent writes.
 - Development memory storage retains array-based filtering; MongoDB-side pagination applies when `USE_MONGODB=true`. No production latency benchmark or live database query-plan verification has been performed.
 
-## Development / live OTP mode
+## Email OTP delivery
 
-Set `APP_MODE=dev` in backend `.env` for local testing: registration, login and resend create a normal challenge with the fixed OTP **123456**, without calling SMTP. Password validation, admin approval, expiry, cooldown and attempt limits still apply. The frontend displays development instructions instead of claiming an email was sent.
-
-Set `APP_MODE=live` to send randomly generated codes through SMTP. This is the default if the variable is omitted. Restart the backend and request a fresh challenge after changing modes; challenges from the other mode are rejected. `NODE_ENV=production` with `APP_MODE=dev` is rejected at startup. Keep `APP_MODE=live` for deployed production services.
+Registration, login, resend, and password reset always generate a random six-digit OTP and send it through SMTP. There is no fixed development OTP, and `APP_MODE` does not control authentication email delivery. Configure all six SMTP variables, restart the backend, and request a new challenge; challenges created before this change may be rejected. Keep SMTP credentials private and use a provider-approved sender.
 
 
 ## Midnight daily coin settlement
@@ -305,7 +304,7 @@ Each account receives a permanent unique `publicId`, such as `USR-A1B2C3D4E5F6`.
 
 ## Login with email or public User ID
 
-`POST /api/v1/auth/login` accepts `{"identifier":"USR-A1B2C3D4E5F6","password":"..."}` or an email in `identifier`. Existing `email` clients remain supported; `userId` is also accepted as a public-ID alias. Public IDs are case-insensitive and always resolve to the account's stored registered email, never a client-supplied OTP destination. Password verification is followed by the same mandatory OTP challenge. The response includes `maskedEmail` for the verification screen. Admin login still checks the resolved account email against `ADMIN_EMAILS`; User IDs do not grant roles. Development mode uses 123456 without email, and live mode emails the linked account.
+`POST /api/v1/auth/login` accepts `{"identifier":"USR-A1B2C3D4E5F6","password":"..."}` or an email in `identifier`. Existing `email` clients remain supported; `userId` is also accepted as a public-ID alias. Public IDs are case-insensitive and always resolve to the account's stored registered email, never a client-supplied OTP destination. Password verification is followed by the same mandatory emailed OTP challenge. The response includes `maskedEmail` for the verification screen. Admin login still checks the resolved account email against `ADMIN_EMAILS`; User IDs do not grant roles.
 
 ### Admin coin rules and daily coins
 

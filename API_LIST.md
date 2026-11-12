@@ -48,7 +48,7 @@ Login/register HTTP `202` par `data.challengeId` dete hain, token nahi. Login re
 {"challengeId":"<challengeId>","otp":"123456"}
 ```
 
-`123456` sirf `APP_MODE=dev` ka fixed OTP hai; live mode mein emailed OTP use karein. OTP 5 minutes valid hai, maximum 5 attempts; resend ke liye 60 seconds baad initial login/register request repeat karein. Purana code invalidate hota hai.
+OTP hamesha random six-digit code hota hai aur SMTP se registered email par bheja jata hai; fixed development code nahi hai. OTP 5 minutes valid hai, maximum 5 attempts; resend ke liye 60 seconds baad initial login/register request repeat karein. Purana code invalidate hota hai.
 
 Verification response ke `data.accessToken` aur `data.refreshToken` save karein. Session fixed 1 hour ka hai; access token maximum 15 minutes ka. Refresh session deadline extend nahi karta. Refresh response ke dono naye tokens replace karein; same refresh token dobara use na karein. `sessionExpiresAt` aur `accessTokenExpiresAt` epoch milliseconds mein hain. Session expire hone par dobara login + OTP karein.
 

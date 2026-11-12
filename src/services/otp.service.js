@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const env = require('../config/env');
 const mail = require('./mail.service');
 const { AppError } = require('../middleware/error.middleware');
+const OTP_DELIVERY_MODE = 'live';
 const schema = new mongoose.Schema({
   _id: String, challengeId: String, email: { type: String, unique: true }, purpose: String, mode: String,
   hash: String, payload: mongoose.Schema.Types.Mixed, attempts: Number,
@@ -15,9 +16,9 @@ const digest = (id, otp) => crypto.createHmac('sha256', env.jwt.secret).update(`
 exports.request = async ({ email, purpose, payload }) => {
   const now = Date.now();
   for (const [key, row] of memory) if (new Date(row.expiresAt).getTime() <= now) memory.delete(key);
-  const row = { _id: crypto.randomUUID(), email, purpose, payload, mode: env.appMode, attempts: 0,
+  const row = { _id: crypto.randomUUID(), email, purpose, payload, mode: OTP_DELIVERY_MODE, attempts: 0,
     createdAt: new Date(now), expiresAt: new Date(now + 5 * 60 * 1000) };
-  const otp = env.appMode === 'dev' ? '123456' : String(crypto.randomInt(100000, 1000000));
+  const otp = String(crypto.randomInt(100000, 1000000));
   row.hash = digest(row._id, otp);
   if (env.useMongoDB) {
     try {
@@ -32,13 +33,13 @@ exports.request = async ({ email, purpose, payload }) => {
     if (prior && now - new Date(prior.createdAt).getTime() < 60000) throw new AppError('Wait 60 seconds before requesting another code', 429);
     memory.set(email, row);
   }
-  try { if (env.appMode !== 'dev') await mail.sendOtp(email, otp, purpose); }
+  try { await mail.sendOtp(email, otp, purpose); }
   catch (error) {
     if (env.useMongoDB) await Challenge.deleteOne({ challengeId: row._id });
     else if (memory.get(email)?._id === row._id) memory.delete(email);
     throw error;
   }
-  return { requiresOtp: true, challengeId: row._id, expiresIn: 300, resendAfter: 60, deliveryMode: env.appMode === 'dev' ? 'development' : 'email' };
+  return { requiresOtp: true, challengeId: row._id, expiresIn: 300, resendAfter: 60, deliveryMode: 'email' };
 };
 
 exports.consume = async (id, otp) => {
@@ -52,7 +53,7 @@ exports.consume = async (id, otp) => {
     if (row) row.attempts++;
   }
   if (!row) throw new AppError('Code expired or attempt limit reached. Request a new code.', 401);
-  if ((row.mode || 'live') !== env.appMode) throw new AppError('Authentication mode changed. Request a new code.', 401);
+  if ((row.mode || 'live') !== OTP_DELIVERY_MODE) throw new AppError('Authentication mode changed. Request a new code.', 401);
   const matches = crypto.timingSafeEqual(Buffer.from(row.hash, 'hex'), Buffer.from(digest(id, otp), 'hex'));
   if (!matches) throw new AppError('Invalid verification code', 401);
   if (env.useMongoDB) {
