@@ -32,7 +32,7 @@ const dto = row => ({
   targetValue: Number(row.targetValue), month: row.month, startsAt: row.startsAt, endsAt: row.endsAt,
   winnerMode: row.winnerMode || 'TOP_N', winnersCount: Number(row.winnersCount || 1),
   rewardDescription: row.rewardDescription || '', rewardPoints: Number(row.rewardPoints || 0),
-  status: row.status, participantCount: (row.participants || []).length, results: row.results || [],
+  status: row.status, participantCount: Number(row.participantCount ?? (row.participants || []).length), results: row.results || [],
   finalizedAt: row.finalizedAt || null, createdAt: row.createdAt || row.created_at, updatedAt: row.updatedAt || row.updated_at
 });
 async function listAdmin() {
@@ -98,12 +98,28 @@ async function join(id, userId, now = new Date()) {
 async function userChallenges(userId, now = new Date()) {
   let rows;
   if (env.useMongoDB) {
-    rows = await Challenge.find({
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    rows = await Challenge.aggregate([
+      { $match: {
       $or: [
         { status: 'PUBLISHED', endsAt: { $gt: now } },
-        { 'participants.userId': userId, status: { $in: ['PUBLISHED', 'PAUSED', 'ENDED'] } },
+        { 'participants.userId': userObjectId, status: { $in: ['PUBLISHED', 'PAUSED', 'ENDED'] } },
       ],
-    }).sort({ startsAt: 1 }).lean();
+      } },
+      { $addFields: {
+        participantCount: { $size: { $ifNull: ['$participants', []] } },
+        joined: { $in: [userObjectId, { $ifNull: ['$participants.userId', []] }] },
+      } },
+      { $addFields: {
+        participants: { $cond: [
+          '$joined',
+          { $filter: { input: { $ifNull: ['$participants', []] }, as: 'participant', cond: { $eq: ['$$participant.userId', userObjectId] } } },
+          [],
+        ] },
+      } },
+      { $project: { title: 1, description: 1, metric: 1, targetValue: 1, month: 1, startsAt: 1, endsAt: 1, winnerMode: 1, winnersCount: 1, rewardDescription: 1, rewardPoints: 1, status: 1, participantCount: 1, participants: 1, results: 1, finalizedAt: 1, createdAt: 1, joined: 1 } },
+      { $sort: { startsAt: 1 } },
+    ]);
   } else {
     rows = memoryChallenges.filter(row =>
       (row.status === 'PUBLISHED' && new Date(row.endsAt) > now) ||
@@ -114,7 +130,7 @@ async function userChallenges(userId, now = new Date()) {
   const visible = rows;
   const progressMap = await progressFor(visible, now, userId);
   return visible.map(row => {
-    const base = dto(row), joined = (row.participants || []).some(item => idOf(item.userId?._id||item.userId) === String(userId));
+    const base = dto(row), joined = row.joined ?? (row.participants || []).some(item => idOf(item.userId?._id||item.userId) === String(userId));
     const currentValue = joined ? (progressMap.get(`${base.id}:${userId}`) || 0) : 0;
     const status=row.status==='PUBLISHED'&&now>=new Date(row.endsAt)?'FINALIZING':row.status;
     return { ...base, status, joined, currentValue, progress: Math.min(100, Math.round(currentValue / base.targetValue * 100)), joinable: !joined && base.status === 'PUBLISHED' && now >= new Date(base.startsAt) && now < new Date(base.endsAt), leaderboard: joined ? (row.finalizedAt ? base.results : (progressMap.get(`${base.id}:leaderboard`) || [])) : [] };
@@ -142,7 +158,7 @@ async function communityChallengesForUser(userId, now = new Date()) {
 function categoryForMetric(metricType) {
   if (metricType === 'steps') return 'steps';
   if (metricType === 'workout') return 'strength';
-  if (metricType === 'active_minutes' || metricType === 'meditation') return 'mind';
+  if (metricType === 'meditation') return 'mind';
   return 'other';
 }
 async function getUserChallenge(id,userId,now=new Date()){
@@ -162,7 +178,7 @@ async function progressFor(challenges, now = new Date(), focusUserId = null) {
   const end = windows.length ? new Date(Math.min(+now, Math.max(...windows.map(window => +window.end)))) : now;
   const metrics = [...new Set(windows.map(({ row }) => row.metric === 'STEPS' ? 'steps' : row.metric === 'WORKOUT_MINUTES' ? 'workout' : 'active_minutes'))];
   const records = env.useMongoDB
-    ? (trackedUserIds.length && windows.length ? await health.HealthRecord.find({ userId: { $in: trackedUserIds }, metricType: { $in: metrics }, recordedAt: { $gte: start, $lt: end }, deleted: { $ne: true } }).lean().then(rows => rows.map(health.toHealthRecord)) : [])
+    ? (trackedUserIds.length && windows.length ? await health.HealthRecord.find({ userId: { $in: trackedUserIds.map(id => mongoose.isValidObjectId(id) ? new mongoose.Types.ObjectId(id) : id) }, metricType: { $in: metrics }, recordedAt: { $gte: start, $lt: end }, deleted: { $ne: true } }).select('userId metricType value recordedAt source activityDate startTime endTime metadata deleted').lean().then(rows => rows.map(health.toHealthRecord)) : [])
     : health.healthRecords.filter(record =>
       (!focusUserId || String(record.user_id || record.userId) === String(focusUserId)) &&
       metrics.includes(record.metric_type || record.metricType) &&
