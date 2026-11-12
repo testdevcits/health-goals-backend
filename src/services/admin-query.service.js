@@ -135,8 +135,10 @@ async function list(kind, params = {}) {
   else items = await attachUsers(items);
   let deviceFilters, userFilters, sourceFilters;
   if (kind === 'users') {
-    const genders = env.useMongoDB ? await users.User.distinct('gender') : (await config.read()).map(user => user.gender);
-    userFilters = { genders: [...new Set(genders.filter(value => typeof value === 'string' && value))].sort((a,b) => a.localeCompare(b)) };
+    const genders = env.useMongoDB
+      ? [...new Set(items.map(user => user.gender).filter(value => typeof value === 'string' && value.trim()))]
+      : (await config.read()).map(user => user.gender);
+    userFilters = { genders: [...new Set(genders)].sort((a,b) => a.localeCompare(b)) };
   }
   if (kind === 'devices') {
     // Read distinct registered combinations across all pages, independent of search.
@@ -151,8 +153,10 @@ async function list(kind, params = {}) {
     deviceFilters = [...unique.values()].sort((a,b) => a.model.localeCompare(b.model));
   }
   if (kind === 'records') {
-    const sources=env.useMongoDB?await health.HealthRecord.distinct('source'):((await health.listAdmin()).map(row=>row.source));
-    sourceFilters=[...new Set(sources.filter(value=>typeof value==='string'&&value))].sort((a,b)=>a.localeCompare(b));
+    const sources = env.useMongoDB
+      ? [...new Set(items.map(row => row.source).filter(value => typeof value === 'string' && value.trim()))]
+      : ((await health.listAdmin()).map(row => row.source));
+    sourceFilters = [...new Set(sources)].sort((a,b) => a.localeCompare(b));
   }
   return {items,total,page,limit,totalPages:Math.ceil(total/limit), ...(deviceFilters ? { deviceFilters } : {}), ...(userFilters ? { userFilters } : {}), ...(sourceFilters ? { sourceFilters } : {})};
 }
