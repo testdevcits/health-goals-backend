@@ -107,6 +107,24 @@ async function userChallenges(userId, now = new Date()) {
     return { ...base, status, joined, currentValue, progress: Math.min(100, Math.round(currentValue / base.targetValue * 100)), joinable: !joined && base.status === 'PUBLISHED' && now >= new Date(base.startsAt) && now < new Date(base.endsAt), leaderboard: joined ? (row.finalizedAt ? base.results : (progressMap.get(`${base.id}:leaderboard`) || [])) : [] };
   }).sort((a,b)=>Number(b.joined)-Number(a.joined)||new Date(a.startsAt)-new Date(b.startsAt));
 }
+async function communityChallengesForUser(userId, now = new Date()) {
+  const community = require('./community.model');
+  const [managed, legacy] = await Promise.all([
+    userChallenges(userId, now),
+    community.listChallenges(userId),
+  ]);
+  const metricType = { STEPS: 'steps', WORKOUT_MINUTES: 'workout', ACTIVE_MINUTES: 'active_minutes' };
+  const managedItems = managed.map(item => ({
+    ...item,
+    metricType: metricType[item.metric] || String(item.metric || '').toLowerCase(),
+    legacy: false,
+  }));
+  const legacyItems = legacy.map(item => ({ ...item, legacy: true }));
+  return [...managedItems, ...legacyItems].sort((a, b) => {
+    if (Boolean(a.joined) !== Boolean(b.joined)) return Number(Boolean(b.joined)) - Number(Boolean(a.joined));
+    return new Date(a.startsAt || 0) - new Date(b.startsAt || 0);
+  });
+}
 async function getUserChallenge(id,userId,now=new Date()){
  const row=await find(id);if(!row)return null;
  const joined=(row.participants||[]).some(item=>idOf(item.userId)===String(userId));
@@ -166,4 +184,4 @@ async function finalizeDue(now = new Date(), notify = async () => {}) {
   }
   return { finalized };
 }
-module.exports = { Challenge, dto, listAdmin, find, create, update, publish, setStatus, join, userChallenges, getUserChallenge, progressFor, finalizeDue, memoryChallenges };
+module.exports = { Challenge, dto, listAdmin, find, create, update, publish, setStatus, join, userChallenges, communityChallengesForUser, getUserChallenge, progressFor, finalizeDue, memoryChallenges };

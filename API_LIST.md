@@ -165,7 +165,7 @@ Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=
 | Socket.IO | `group:join` | Auth token ke saath joined group room join karein; payload `{ groupId }`. |
 | Socket.IO | `group:send` | Payload `{ groupId, message }`; saved message group members ko `group:message` event mein milta hai. |
 | GET/POST | `/community/groups/:id/challenges` | Group challenges list/create. |
-| GET | `/community/challenges` | Active challenges list karein. |
+| GET | `/community/challenges` | Published admin-managed challenges (joinable/current or already joined) and active legacy community challenges; returns the signed-in user's progress. Android filters categories locally by `metricType`; no `category` query is accepted. |
 | POST | `/community/challenges` | Challenge banayein: `title`, `metricType`, `targetValue`, `endsAt`, optional `description`, `startsAt`, `rewardPoints`. |
 | POST | `/community/challenges/:id/join` | Challenge join karein. |
 | GET | `/community/badges` | Synced health activity se earned badges aur progress. |
