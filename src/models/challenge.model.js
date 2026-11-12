@@ -22,8 +22,8 @@ const schema = new mongoose.Schema({
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
 }, { timestamps: true });
-schema.index({ status: 1, month: 1, startsAt: 1 });
-schema.index({ 'participants.userId': 1, status: 1 });
+schema.index({ status: 1, startsAt: 1, endsAt: 1 });
+schema.index({ status: 1, 'participants.userId': 1, startsAt: 1 });
 const Challenge = mongoose.models.AdminChallenge || mongoose.model('AdminChallenge', schema);
 const memoryChallenges = [];
 const idOf = value => String(value?._id || value?.id || value);
@@ -96,11 +96,24 @@ async function join(id, userId, now = new Date()) {
   return dto(current);
 }
 async function userChallenges(userId, now = new Date()) {
-  const rows = env.useMongoDB ? await Challenge.find({ status: { $in: ['PUBLISHED', 'PAUSED', 'ENDED'] } }).sort({ startsAt: 1 }).lean() : memoryChallenges.filter(row => ['PUBLISHED','PAUSED','ENDED'].includes(row.status));
-  const enrolled = rows.filter(row => (row.participants || []).some(item => idOf(item.userId?._id||item.userId) === String(userId)));
-  const candidates = rows.filter(row => row.status === 'PUBLISHED' && now < new Date(row.endsAt) && !(row.participants || []).some(item => idOf(item.userId?._id||item.userId) === String(userId)));
-  const progressMap = await progressFor([...enrolled, ...candidates], now);
-  return [...candidates, ...enrolled].map(row => {
+  let rows;
+  if (env.useMongoDB) {
+    rows = await Challenge.find({
+      $or: [
+        { status: 'PUBLISHED', endsAt: { $gt: now } },
+        { 'participants.userId': userId, status: { $in: ['PUBLISHED', 'PAUSED', 'ENDED'] } },
+      ],
+    }).sort({ startsAt: 1 }).lean();
+  } else {
+    rows = memoryChallenges.filter(row =>
+      (row.status === 'PUBLISHED' && new Date(row.endsAt) > now) ||
+      (['PUBLISHED', 'PAUSED', 'ENDED'].includes(row.status) &&
+       (row.participants || []).some(item => idOf(item.userId?._id || item.userId) === String(userId))),
+    );
+  }
+  const visible = rows;
+  const progressMap = await progressFor(visible, now, userId);
+  return visible.map(row => {
     const base = dto(row), joined = (row.participants || []).some(item => idOf(item.userId?._id||item.userId) === String(userId));
     const currentValue = joined ? (progressMap.get(`${base.id}:${userId}`) || 0) : 0;
     const status=row.status==='PUBLISHED'&&now>=new Date(row.endsAt)?'FINALIZING':row.status;
@@ -117,13 +130,20 @@ async function communityChallengesForUser(userId, now = new Date()) {
   const managedItems = managed.map(item => ({
     ...item,
     metricType: metricType[item.metric] || String(item.metric || '').toLowerCase(),
+    category: categoryForMetric(metricType[item.metric] || String(item.metric || '').toLowerCase()),
     legacy: false,
   }));
-  const legacyItems = legacy.map(item => ({ ...item, legacy: true }));
+  const legacyItems = legacy.map(item => ({ ...item, category: categoryForMetric(item.metricType), legacy: true }));
   return [...managedItems, ...legacyItems].sort((a, b) => {
     if (Boolean(a.joined) !== Boolean(b.joined)) return Number(Boolean(b.joined)) - Number(Boolean(a.joined));
     return new Date(a.startsAt || 0) - new Date(b.startsAt || 0);
   });
+}
+function categoryForMetric(metricType) {
+  if (metricType === 'steps') return 'steps';
+  if (metricType === 'workout') return 'strength';
+  if (metricType === 'active_minutes' || metricType === 'meditation') return 'mind';
+  return 'other';
 }
 async function getUserChallenge(id,userId,now=new Date()){
  const row=await find(id);if(!row)return null;
@@ -133,17 +153,28 @@ async function getUserChallenge(id,userId,now=new Date()){
  const progress=await progressFor([row],now),base=dto(row),currentValue=joined?(progress.get(`${base.id}:${userId}`)||0):0;
  return {...base,joined,joinable:!joined&&joinable,currentValue,progress:Math.min(100,Math.round(currentValue/base.targetValue*100)),leaderboard:joined?(row.finalizedAt?base.results:(progress.get(`${base.id}:leaderboard`)||[])):[]};
 }
-async function progressFor(challenges, now = new Date()) {
+async function progressFor(challenges, now = new Date(), focusUserId = null) {
   const windows = challenges.map(row => ({ row, start: new Date(row.startsAt), end: new Date(row.endsAt) }));
   const participants = [...new Set(windows.flatMap(({row}) => (row.participants || []).map(item => idOf(item.userId?._id||item.userId))))];
+  const trackedUserIds = focusUserId ? [String(focusUserId)] : participants;
   const health = require('./health.model');
+  const start = windows.length ? new Date(Math.min(...windows.map(window => +window.start))) : now;
+  const end = windows.length ? new Date(Math.min(+now, Math.max(...windows.map(window => +window.end)))) : now;
+  const metrics = [...new Set(windows.map(({ row }) => row.metric === 'STEPS' ? 'steps' : row.metric === 'WORKOUT_MINUTES' ? 'workout' : 'active_minutes'))];
   const records = env.useMongoDB
-    ? (participants.length ? await health.HealthRecord.find({ userId: { $in: participants }, recordedAt: { $lte: now }, deleted: { $ne: true } }).lean().then(rows => rows.map(health.toHealthRecord)) : [])
-    : health.healthRecords.map(health.toHealthRecord);
-  const users = await require('./user.model').listUsers();
+    ? (trackedUserIds.length && windows.length ? await health.HealthRecord.find({ userId: { $in: trackedUserIds }, metricType: { $in: metrics }, recordedAt: { $gte: start, $lt: end }, deleted: { $ne: true } }).lean().then(rows => rows.map(health.toHealthRecord)) : [])
+    : health.healthRecords.filter(record =>
+      (!focusUserId || String(record.user_id || record.userId) === String(focusUserId)) &&
+      metrics.includes(record.metric_type || record.metricType) &&
+      new Date(record.recorded_at || record.recordedAt) >= start &&
+      new Date(record.recorded_at || record.recordedAt) < end,
+    ).map(health.toHealthRecord);
+  const users = focusUserId ? [] : await require('./user.model').listUsers();
   const output = new Map();
   for (const {row,start,end} of windows) {
-    const people = (row.participants || []).map(item => idOf(item.userId?._id||item.userId));
+    const people = focusUserId
+      ? ((row.participants || []).some(item => idOf(item.userId?._id || item.userId) === String(focusUserId)) ? [String(focusUserId)] : [])
+      : (row.participants || []).map(item => idOf(item.userId?._id||item.userId));
     const byUser = new Map(people.map(id => [id, 0]));
     for (const record of records) {
       const userId = String(record.userId?._id||record.userId || record.user_id), day = record.activityDate || istDay(record.recordedAt);
