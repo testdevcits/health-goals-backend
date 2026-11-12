@@ -72,6 +72,19 @@ async function update(id, changes, adminId) {
   if (env.useMongoDB) return Challenge.findOneAndUpdate({ _id:id,status:current.status,finalizedAt:null }, { $set: { ...changes, updatedBy: adminId } }, { new: true, runValidators: true }).lean().then(row => row && dto(row));
   Object.assign(current, changes, { updatedBy: adminId, updatedAt: new Date() }); return dto(current);
 }
+async function remove(id) {
+  const deletable = { status: { $in: ['DRAFT', 'PAUSED'] }, finalizedAt: null, $or: [{ participants: { $size: 0 } }, { participants: { $exists: false } }] };
+  if (env.useMongoDB) {
+    if (!mongoose.isValidObjectId(id)) return null;
+    return Challenge.findOneAndDelete({ _id: id, ...deletable }).lean().then(row => row && dto(row));
+  }
+  const index = memoryChallenges.findIndex(row => row.id === String(id));
+  if (index < 0) return null;
+  const row = memoryChallenges[index];
+  if (!['DRAFT', 'PAUSED'].includes(row.status) || row.finalizedAt || (row.participants || []).length) return null;
+  memoryChallenges.splice(index, 1);
+  return dto(row);
+}
 async function publish(id, adminId) {
   const current = await find(id); if (!current) return null;
   if (current.finalizedAt || current.status === 'ENDED') return null;
@@ -231,4 +244,4 @@ async function finalizeDue(now = new Date(), notify = async () => {}) {
   }
   return { finalized };
 }
-module.exports = { Challenge, dto, listAdmin, find, create, update, publish, setStatus, join, userChallenges, communityChallengesForUser, getUserChallenge, progressFor, finalizeDue, memoryChallenges };
+module.exports = { Challenge, dto, listAdmin, find, create, update, remove, publish, setStatus, join, userChallenges, communityChallengesForUser, getUserChallenge, progressFor, finalizeDue, memoryChallenges };

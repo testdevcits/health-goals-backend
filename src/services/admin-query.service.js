@@ -30,6 +30,10 @@ function buildQuery(kind, params = {}) {
     if (typeof params.metricType !== 'string' || params.metricType.length>40) throw new AppError('Invalid metric',400);
     query.metricType = params.metricType;
   }
+  if (kind === 'records' && params.source) {
+    if (typeof params.source !== 'string' || params.source.length > 80) throw new AppError('Invalid record source',400);
+    query.source = params.source;
+  }
   if (kind === 'users') {
     if (params.gender) {
       if (typeof params.gender !== 'string' || params.gender.length > 100) throw new AppError('Invalid gender filter',400);
@@ -76,6 +80,10 @@ function buildQuery(kind, params = {}) {
     const escaped = params.q.trim().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
     if (escaped) {
       query.$or = config.fields.map(field => ({ [field]: { $regex: escaped, $options: 'i' } }));
+      if(kind==='records'){
+        const normalizedMetric=escaped.replace(/\s+/g,'_');
+        if(normalizedMetric!==escaped)query.$or.push({metricType:{$regex:normalizedMetric,$options:'i'}});
+      }
       if (mongoose.isValidObjectId(params.q)) {
         query.$or.push({ _id: params.q });
         if(kind !== 'users') query.$or.push({ userId: params.q });
@@ -95,25 +103,37 @@ async function attachUsers(items) {
 }
 async function list(kind, params = {}) {
   const {config,query,page,limit} = buildQuery(kind,params);
+  if(kind==='records'&&params.q&&env.useMongoDB){
+    const escaped=String(params.q).trim().replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+    if(escaped){const matchingUsers=await users.User.find({$or:['name','email','publicId'].map(field=>({[field]:{$regex:escaped,$options:'i'}}))}).select('_id').limit(500).lean();if(matchingUsers.length)query.$or.push({userId:{$in:matchingUsers.map(user=>user._id)}});}
+  }
+  const allowedSorts=kind==='records'?['recordedAt','metricType','value','source']:kind==='users'?['name','email','createdAt']:['model','platform','createdAt'];
+  const sortBy=params.sortBy||config.time;
+  if(!allowedSorts.includes(sortBy))throw new AppError('Invalid sort field',400);
+  const sortOrder=params.sortOrder||'desc';
+  if(!['asc','desc'].includes(sortOrder))throw new AppError('Invalid sort order',400);
+  const direction=sortOrder==='asc'?1:-1;
   let items,total;
   if (env.useMongoDB) {
     [items,total] = await Promise.all([
-      config.model.find(query).select(config.projection || '').sort({[config.time]:-1,_id:-1}).skip((page-1)*limit).limit(limit).lean().maxTimeMS(10000),
+      config.model.find(query).select(config.projection || '').sort({[sortBy]:direction,_id:direction}).skip((page-1)*limit).limit(limit).lean().maxTimeMS(10000),
       config.model.countDocuments(query).maxTimeMS(10000)
     ]);
     items=items.map(config.convert);
   } else {
     const q=String(params.q || '').trim().toLowerCase();
-    const rows=(await config.read()).filter(row => (!params.userId || String(row.userId)===params.userId) && (!params.status || row.status===params.status) && (!params.metricType || row.metricType===params.metricType) && (kind !== 'devices' || ((!params.platform || row.platform===params.platform) && (!params.model || row.model===params.model))) &&
+    const allUsers=kind==='records'&&q?await users.listUsers():[];
+    const userById=new Map(allUsers.map(user=>[String(user.id),user]));
+    const rows=(await config.read()).filter(row => (!params.userId || String(row.userId)===params.userId) && (!params.status || row.status===params.status) && (!params.metricType || row.metricType===params.metricType) && (kind!=='records'||!params.source||row.source===params.source) && (kind !== 'devices' || ((!params.platform || row.platform===params.platform) && (!params.model || row.model===params.model))) &&
       (kind !== 'users' || (!params.gender || row.gender===params.gender) && inAgeRange(row.birthDate||row.birth_date,params.minAge,params.maxAge) && inNumericRange(row.weightKg??row.weight_kg,params.minWeightKg,params.maxWeightKg) && inNumericRange(row.heightCm??row.height_cm,params.minHeightCm,params.maxHeightCm)) &&
-      (!q || [...config.fields,'id','userId'].some(f=>String(row[f] || '').toLowerCase().includes(q))) &&
+      (!q || [...config.fields,'id','userId'].some(f=>String(row[f] || '').toLowerCase().includes(q)) || (kind==='records'&&(String(row.metricType||'').replaceAll('_',' ').toLowerCase().includes(q)||[userById.get(String(row.userId))?.name,userById.get(String(row.userId))?.email,userById.get(String(row.userId))?.publicId].some(value=>String(value||'').toLowerCase().includes(q))))) &&
       (!query[config.time]?.$gte || new Date(row[config.time])>=query[config.time].$gte) && (!query[config.time]?.$lte || new Date(row[config.time])<=query[config.time].$lte))
-      .sort((a,b)=>new Date(b[config.time])-new Date(a[config.time]) || String(b.id).localeCompare(String(a.id)));
+      .sort((a,b)=>{const av=a[sortBy],bv=b[sortBy];const cmp=sortBy==='recordedAt'||sortBy==='createdAt'?new Date(av)-new Date(bv):typeof av==='number'||typeof bv==='number'?Number(av||0)-Number(bv||0):String(av||'').localeCompare(String(bv||''),undefined,{numeric:true,sensitivity:'base'});return cmp*direction||String(a.id).localeCompare(String(b.id))*direction;});
     total=rows.length;items=rows.slice((page-1)*limit,page*limit);
   }
   if (kind === 'users') items = items.map(user => {const {profileAnswers,birthDate,birth_date,...safeUser}=user;return {...safeUser,age:ageFromBirthDate(birthDate||birth_date),isAdmin:env.adminEmails.includes(String(user.email||'').toLowerCase()) || ['ADMIN','SUB_ADMIN'].includes(user.role)};});
   else items = await attachUsers(items);
-  let deviceFilters, userFilters;
+  let deviceFilters, userFilters, sourceFilters;
   if (kind === 'users') {
     const genders = env.useMongoDB ? await users.User.distinct('gender') : (await config.read()).map(user => user.gender);
     userFilters = { genders: [...new Set(genders.filter(value => typeof value === 'string' && value))].sort((a,b) => a.localeCompare(b)) };
@@ -130,7 +150,11 @@ async function list(kind, params = {}) {
     }
     deviceFilters = [...unique.values()].sort((a,b) => a.model.localeCompare(b.model));
   }
-  return {items,total,page,limit,totalPages:Math.ceil(total/limit), ...(deviceFilters ? { deviceFilters } : {}), ...(userFilters ? { userFilters } : {})};
+  if (kind === 'records') {
+    const sources=env.useMongoDB?await health.HealthRecord.distinct('source'):((await health.listAdmin()).map(row=>row.source));
+    sourceFilters=[...new Set(sources.filter(value=>typeof value==='string'&&value))].sort((a,b)=>a.localeCompare(b));
+  }
+  return {items,total,page,limit,totalPages:Math.ceil(total/limit), ...(deviceFilters ? { deviceFilters } : {}), ...(userFilters ? { userFilters } : {}), ...(sourceFilters ? { sourceFilters } : {})};
 }
 function inNumericRange(value,min,max){if((min===undefined||min==='')&&(max===undefined||max===''))return true;if(value===null||value===undefined||value==='')return false;const number=Number(value);return (min===undefined||min===''||number>=Number(min))&&(max===undefined||max===''||number<=Number(max));}
 function calculateAge(value){if(!value)return null;const match=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);if(!match)return null;const [,d,m,y]=match,parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()),today=Object.fromEntries(parts.map(part=>[part.type,Number(part.value)])),birth=new Date(Number(y),Number(m)-1,Number(d));if(birth.getFullYear()!==Number(y)||birth.getMonth()!==Number(m)-1||birth.getDate()!==Number(d))return null;let age=today.year-birth.getFullYear();if(today.month<Number(m)||(today.month===Number(m)&&today.day<Number(d)))age--;return age<0||age>120?null:age;}
