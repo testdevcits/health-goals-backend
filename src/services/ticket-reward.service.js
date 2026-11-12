@@ -49,10 +49,14 @@ async function leaderboard(month, audience) {
   }
   const groups = env.useMongoDB ? await community.Group.find({deletedAt:null}).lean() : community.memoryGroups.filter(group=>!group.deletedAt);
   return groups.map(group => {
-    const members = (group.members || []).map(member => String(member.userId?._id || member.userId || member));
+    const members = (group.members || []).map(member => ({ id:String(member.userId?._id||member.userId||member), joinedAt:new Date(member.joinedAt||group.createdAt||group.created_at||0) }));
     const leaderId = String(group.createdBy?._id || group.createdBy || '');
     const leader = byId.get(leaderId);
-    const memberSnapshot = members.map(id => ({ id, name: byId.get(id)?.name || 'Member', email: byId.get(id)?.email || '', steps: totals.get(id) || 0, role: id === leaderId ? 'GL' : 'MEMBER' }));
+    const memberSnapshot = members.map(({id,joinedAt}) => {
+      const eligible=records.filter(row=>String(row.userId)===id&&community.activityStartAt(row)>=joinedAt);
+      const steps=userMonthTotals(eligible).get(id)||0;
+      return { id, name: byId.get(id)?.name || 'Member', email: byId.get(id)?.email || '', steps, role: id === leaderId ? 'GL' : 'MEMBER' };
+    });
     return { id: String(group._id || group.id), name: group.name || 'Group', imageUrl: group.imageUrl || null, leaderId, leaderName: leader?.name || 'Group leader', leaderEmail: leader?.email || '', members: memberSnapshot, memberCount: memberSnapshot.length, steps: memberSnapshot.reduce((sum, member) => sum + member.steps, 0), rank: 0 };
   }).sort((a,b) => b.steps-a.steps || a.name.localeCompare(b.name)).map((row,index) => ({ ...row, rank: index + 1 }));
 }

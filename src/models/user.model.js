@@ -31,6 +31,7 @@ const userSchema = new mongoose.Schema(
     gender: { type: String, default: '' },
     profileAnswers: { type: Map, of: mongoose.Schema.Types.Mixed, default: {} },
     profileImageUrl: { type: String, default: '' },
+    activeGroupId: { type: mongoose.Schema.Types.ObjectId, ref: 'CommunityGroup', default: null, index: true },
     encryptedPhone: { type: String, default: null, select: false },
     deviceProfile: { type: deviceProfileSchema, default: null },
     email: {

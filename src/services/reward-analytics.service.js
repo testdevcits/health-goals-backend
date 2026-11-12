@@ -1,6 +1,7 @@
 const env=require('../config/env');
 const rules=require('./reward-rule.service');
 const health=require('../models/health.model');
+const community=require('../models/community.model');
 const {calculate,dayKey}=require('./daily-rules');
 const {AppError}=require('../middleware/error.middleware');
 function period(rule,now){
@@ -21,7 +22,19 @@ async function analytics(id,now=new Date()){
  if(rule.audience==='GROUP'){
   const definitions=(await rules.list()).items;
   const groupIds=new Set(definitions.filter(other=>{const dates=period(other,now);return other.audience==='GROUP'&&other.ruleType===rule.ruleType&&other.metric===rule.metric&&other.targetValue===rule.targetValue&&dates.start===window.start&&dates.end===window.end;}).map(other=>other.targetGroupId));
-  participants=targets.groups.filter(group=>groupIds.has(group.id)).map(group=>({id:group.id,name:group.name,value:group.members.filter(member=>member.status==='ACTIVE').reduce((sum,member)=>sum+(totals.get(member.id)||0),0)}));
+  participants=targets.groups.filter(group=>groupIds.has(group.id)).map(group=>{
+   const value=group.members.filter(member=>member.status==='ACTIVE').reduce((sum,member)=>{
+    const joinedAt=new Date(member.joinedAt||group.createdAt||0);
+    const memberTotal=[...days.values()].filter(day=>day.userId===member.id).reduce((memberSum,day)=>{
+     const eligible=day.records.filter(record=>community.activityStartAt(record)>=joinedAt);
+     if(!eligible.length)return memberSum;
+     const result=calculate(eligible),amount=rule.metric==='STEPS'?result.steps:rule.metric==='WORKOUT_HOURS'?result.workoutMinutes/60:result.meditationMinutes/60;
+     return memberSum+amount;
+    },0);
+    return sum+memberTotal;
+   },0);
+   return {id:group.id,name:group.name,value};
+  });
  }
  participants.sort((a,b)=>b.value-a.value||a.name.localeCompare(b.name));let rank=0,previous;
  participants=participants.map((row,index)=>{if(row.value!==previous)rank=index+1;previous=row.value;return {...row,rank,progress:row.value/rule.targetValue*100,achieved:row.value>=rule.targetValue};});

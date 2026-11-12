@@ -9,6 +9,7 @@ const schema=new mongoose.Schema({key:{type:String,unique:true},ruleId:String,st
 const awardSchema=new mongoose.Schema({key:{type:String,unique:true},userId:{type:String,index:true},runKey:String,title:String,ruleTitle:String,points:Number,groupId:String,awardedAt:Date});
 const Run=mongoose.model('RewardRun',schema),Award=mongoose.model('RuleAchievement',awardSchema);
 const memoryRuns=new Map(),memoryAwards=new Map();
+function rankRows(rows){return [...rows].sort((a,b)=>b.value-a.value||String(a.id).localeCompare(String(b.id))).map((row,index)=>({...row,rank:index+1}));}
 async function runs(){return env.useMongoDB?Run.find().lean():[...memoryRuns.values()];}
 async function achievements(userId){return env.useMongoDB?Award.find({userId:String(userId)}).sort({awardedAt:-1}).lean():[...memoryAwards.values()].filter(row=>row.userId===String(userId));}
 async function snapshot(rule,now){
@@ -42,8 +43,9 @@ async function progress(run,now){
  const days=new Map();
  for(const row of records){const id=String(row.userId),day=row.activityDate||dayKey(row.recordedAt);if(!ids.includes(id)||row.deleted||day<run.start||day>run.end||new Date(row.recordedAt)>now)continue;const key=`${id}:${day}`;if(!days.has(key))days.set(key,{id,records:[]});days.get(key).records.push(row);}
  const totals=new Map();for(const {id,records:rows} of days.values()){const value=calculate(rows),amount=run.rule.metric==='STEPS'?value.steps:run.rule.metric==='WORKOUT_HOURS'?value.workoutMinutes/60:value.meditationMinutes/60;totals.set(id,(totals.get(id)||0)+amount);}
- let rank=0,previous;
- return run.participants.map(row=>({...row,value:row.userIds.reduce((sum,id)=>sum+(totals.get(id)||0),0)})).sort((a,b)=>b.value-a.value||a.id.localeCompare(b.id)).map((row,index)=>{if(row.value!==previous)rank=index+1;previous=row.value;return {...row,rank,progress:row.value/run.rule.targetValue*100,achieved:row.value>=run.rule.targetValue};});
+ // Competition ranks are unique: equal scores are ordered by stable ID, so
+ // the same run always returns positions 1, 2, 3 instead of 1, 1, 3.
+ return rankRows(run.participants.map(row=>({...row,value:row.userIds.reduce((sum,id)=>sum+(totals.get(id)||0),0)}))).map(row=>({...row,progress:row.value/run.rule.targetValue*100,achieved:row.value>=run.rule.targetValue}));
 }
 async function award(run,row,now){
  for(const userId of row.userIds){
@@ -82,12 +84,11 @@ async function forUser(userId){
   if(run.rule.audience!=='GROUP')continue;
   const comparable=allRuns.filter(other=>other.rule.audience==='GROUP'&&other.start===run.start&&other.end===run.end&&other.rule.ruleType===run.rule.ruleType&&other.rule.metric===run.rule.metric&&other.rule.targetValue===run.rule.targetValue);
   const groups=new Map();for(const other of comparable)for(const row of other.rows||[])if(!groups.has(row.id)||groups.get(row.id).value<row.value)groups.set(row.id,row);
-  let rank=0,previous;
-  const combined=[...groups.values()].sort((a,b)=>b.value-a.value||a.id.localeCompare(b.id)).map((row,index)=>{if(row.value!==previous)rank=index+1;previous=row.value;return {...row,rank};});
-  // Comparison rank is a display statistic; per-rule winner awards remain separate.
+  const combined=rankRows([...groups.values()]);
+  // Equal group scores use stable ID ordering, matching individual ranks.
   const index=history.findIndex(item=>item.key===run.key);history[index]={...run,rows:combined};
  }
  const withProfileImage=({userIds,...row})=>({...row,profileImageUrl:userById.get(String(row.id))?.profileImageUrl||''});
- return {competitions:history.map(run=>({id:run.key,title:run.rule.title,ruleType:run.rule.ruleType,audience:run.rule.audience,metric:run.rule.metric,targetValue:run.rule.targetValue,start:run.start,end:run.end,status:run.finalizedAt?'FINAL':active.has(run.ruleId)?'LIVE':'PAUSED',leaderboard:(run.rows||[]).slice(0,20).map(withProfileImage),myProgress:(run.rows||[]).filter(row=>row.userIds.includes(String(userId))).map(withProfileImage)})),achievements:await achievements(userId)};
+ return {competitions:history.map(run=>{const rows=rankRows(run.rows||[]);return {id:run.key,title:run.rule.title,ruleType:run.rule.ruleType,audience:run.rule.audience,metric:run.rule.metric,targetValue:run.rule.targetValue,start:run.start,end:run.end,status:run.finalizedAt?'FINAL':active.has(run.ruleId)?'LIVE':'PAUSED',leaderboard:rows.slice(0,20).map(withProfileImage),myProgress:rows.filter(row=>row.userIds.includes(String(userId))).map(withProfileImage)}}),achievements:await achievements(userId)};
 }
 module.exports={Run,Award,evaluate,forUser,progress,snapshot,achievements};

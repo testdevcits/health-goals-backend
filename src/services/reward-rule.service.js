@@ -90,7 +90,7 @@ async function options() {
     ? await community.Group.find({deletedAt:null}).select('name description emoji isPrivate maxMembers members createdAt').sort({createdAt:-1,_id:-1}).lean()
     : community.memoryGroups.filter(group=>!group.deletedAt);
   const userById=new Map(users.map(user=>[user.id,user]));
-  return {users,groups:groups.map(group=>({id:String(group._id||group.id),name:group.name,description:group.description||'',emoji:group.emoji||'🏃',private:Boolean(group.isPrivate??group.private),memberCount:(group.members||[]).length,maxMembers:10,members:(group.members||[]).map(member=>userById.get(String(member.userId?._id||member.userId||member))||null).filter(Boolean)}))};
+  return {users,groups:groups.map(group=>({id:String(group._id||group.id),name:group.name,description:group.description||'',emoji:group.emoji||'🏃',private:Boolean(group.isPrivate??group.private),memberCount:(group.members||[]).length,maxMembers:10,createdAt:group.createdAt||group.created_at||null,members:(group.members||[]).map(member=>{const user=userById.get(String(member.userId?._id||member.userId||member));return user?{...user,joinedAt:member.joinedAt||group.createdAt||group.created_at||null}:null;}).filter(Boolean)}))};
 }
 async function validateAudience(data) {
   if (data.audience==='GROUP') {

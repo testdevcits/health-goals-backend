@@ -140,6 +140,7 @@ Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=
 |---|---|---|
 | GET | `/wallet` | Wallet balance, transactions aur `dailyActivity`. Embedded transactions maximum 100; older ledger ke liye `/activity/transactions`. |
 | GET | `/rewards` | Available reward catalogue. |
+| GET | `/rewards/competitions` | Active/completed reward-rule competitions, leaderboard and `myProgress`; ranked by score descending, then stable participant ID ascending for ties, so ranks are unique. |
 | GET | `/rewards/leaderboard-tickets` | Signed-in user's monthly ticket rewards and image; group ticket is visible to the GL only. |
 | POST | `/rewards/:id/redeem` | Reward redeem karein; wallet points transactionally deduct hote hain aur partner ka ek unused voucher code milta hai. Body required nahi. |
 | GET | `/redemptions` | Apni redemption history. |
@@ -151,20 +152,21 @@ Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=
 |---|---|---|
 | GET | `/community/groups` | Apne groups list karein. |
 | GET | `/community/groups/discover` | Public groups list karein. |
-| POST | `/community/groups` | Group banayein: `name`, optional `description`, `emoji`, `private`. Creator GL hota hai; group cap fixed 10 members. |
+| POST | `/community/groups` | Group banayein: `name`, optional `description`, `emoji`, `private`. Creator GL hota hai; group cap fixed 10 members. Ek user ek waqt mein sirf ek active group ka member ho sakta hai. |
 | GET | `/community/groups/:id` | Group details; private group sirf members ke liye. |
 | GET | `/community/users/search?q=...` | Active users ko name/public ID se dhoondein (max 10 results). |
-| POST | `/community/groups/:id/join` | Public group join karein; private groups mein GL invite karta hai. |
-| POST | `/community/groups/:id/members` | GL kisi active user ko add karein. Body: `{ "publicId": "USR-..." }`. |
+| POST | `/community/groups/:id/join` | Public group join karein; private groups mein GL invite karta hai. Membership ka `joinedAt` save hota hai; pehle ke records group totals mein nahi gine jaate. |
+| POST | `/community/groups/:id/members` | GL kisi active user ko add karein. Body: `{ "publicId": "USR-..." }`. User ko pehle apna current group chhodna hoga. |
 | PATCH | `/community/groups/:id` | GL group name/image update karein. Body mein `name` (3–50 chars) and/or `image` (JPEG/PNG/WebP base64 data URI, <4.5 MB) bhejein; `image: null` image remove karta hai. Response group mein `imageUrl` aata hai. |
 | POST | `/community/groups/:id/leave` | Group chhodein. GL leave kare to oldest member GL banega. |
-| GET | `/community/groups/:id/activity?day=YYYY-MM-DD` | Daily group totals aur har member ka activity count. |
+| GET | `/community/groups/:id/activity?day=YYYY-MM-DD` | Daily group totals/member activity; each member ke `joinedAt` se pehle ke records exclude hote hain. |
 | GET | `/community/groups/leaderboard?day=YYYY-MM-DD` | Public groups ka daily steps leaderboard. |
-| GET | `/community/groups/:id/leaderboard` | Group ke andar members ka existing 7-day steps leaderboard. |
+| GET | `/community/groups/:id/leaderboard` | Group ke members ka 7-day steps leaderboard; membership start se pehle ke records exclude hote hain. |
 | GET/POST | `/community/groups/:id/messages` | Joined members ka chat history/send; send body `message`. |
 | Socket.IO | `group:join` | Auth token ke saath joined group room join karein; payload `{ groupId }`. |
 | Socket.IO | `group:send` | Payload `{ groupId, message }`; saved message group members ko `group:message` event mein milta hai. |
-| GET/POST | `/community/groups/:id/challenges` | Group challenges list/create. |
+| GET/POST | `/community/groups/:id/challenges` | Group challenges list/create; signed-in member ka progress group membership start ke baad ke eligible records se banta hai. |
+| POST | `/community/groups/:id/challenges/:challengeId/join` | Group member joins a specific challenge in that same group; rejects foreign-group challenges and closed date windows. |
 | GET | `/community/challenges` | Published admin-managed challenges (joinable/current or already joined) and active legacy community challenges; returns the signed-in user's progress. Android filters categories locally by `metricType`; no `category` query is accepted. |
 | POST | `/community/challenges` | Challenge banayein: `title`, `metricType`, `targetValue`, `endsAt`, optional `description`, `startsAt`, `rewardPoints`. |
 | POST | `/community/challenges/:id/join` | Challenge join karein. |
