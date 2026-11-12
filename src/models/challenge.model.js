@@ -73,15 +73,14 @@ async function update(id, changes, adminId) {
   Object.assign(current, changes, { updatedBy: adminId, updatedAt: new Date() }); return dto(current);
 }
 async function remove(id) {
-  const deletable = { status: { $in: ['DRAFT', 'PAUSED'] }, finalizedAt: null, $or: [{ participants: { $size: 0 } }, { participants: { $exists: false } }] };
   if (env.useMongoDB) {
     if (!mongoose.isValidObjectId(id)) return null;
-    return Challenge.findOneAndDelete({ _id: id, ...deletable }).lean().then(row => row && dto(row));
+    return Challenge.findOneAndDelete({ _id: id, status: { $ne: 'ENDED' }, finalizedAt: null }).lean().then(row => row && dto(row));
   }
   const index = memoryChallenges.findIndex(row => row.id === String(id));
   if (index < 0) return null;
   const row = memoryChallenges[index];
-  if (!['DRAFT', 'PAUSED'].includes(row.status) || row.finalizedAt || (row.participants || []).length) return null;
+  if (row.status === 'ENDED' || row.finalizedAt) return null;
   memoryChallenges.splice(index, 1);
   return dto(row);
 }

@@ -22,4 +22,5 @@ async function markRead(userId,id){
  const row=memory.find(item=>item.id===id&&item.userId===String(userId));if(!row)return null;row.readAt=new Date();return dto(row);
 }
 async function markAllRead(userId){if(env.useMongoDB){const result=await Notification.updateMany({userId:String(userId),readAt:null},{$set:{readAt:new Date()}});return {updated:result.modifiedCount||0};}let updated=0;for(const row of memory)if(row.userId===String(userId)&&!row.readAt){row.readAt=new Date();updated++;}return {updated};}
-module.exports={Notification,createForUser,list,markRead,markAllRead,memory};
+async function removeChallengeNotifications(challengeId){const id=String(challengeId);if(env.useMongoDB){const result=await Notification.deleteMany({'data.challengeId':id});return {deleted:result.deletedCount||0};}const before=memory.length;for(let index=memory.length-1;index>=0;index--)if(String(memory[index].data?.challengeId||'')===id)memory.splice(index,1);return {deleted:before-memory.length};}
+module.exports={Notification,createForUser,list,markRead,markAllRead,removeChallengeNotifications,memory};

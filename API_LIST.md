@@ -284,7 +284,7 @@ Source: current backend route/controller/service implementation. The versioned A
 
 ## Monthly challenges and notifications
 
-- Admin: `GET/POST /api/v1/admin/challenges`, `PATCH/DELETE /api/v1/admin/challenges/:id`, `POST /api/v1/admin/challenges/:id/publish`, `PATCH /api/v1/admin/challenges/:id/status`, and `POST /api/v1/admin/challenges/:id/finalize`. Delete is limited to unjoined, unfinalized draft or paused challenges; challenge writes require full-admin access.
+- Admin: `GET/POST /api/v1/admin/challenges`, `PATCH/DELETE /api/v1/admin/challenges/:id`, `POST /api/v1/admin/challenges/:id/publish`, `PATCH /api/v1/admin/challenges/:id/status`, and `POST /api/v1/admin/challenges/:id/finalize`. Delete permanently removes any unfinalized challenge and its related notifications, including participant entries; finalized challenges cannot be deleted. Challenge writes require full-admin access.
 - User: `GET /api/v1/community/challenges`, `GET /api/v1/community/challenges/:id`, and `POST /api/v1/community/challenges/:id/join`.
 - User notifications: `GET /api/v1/notifications`, `PATCH /api/v1/notifications/:id/read`, and `PATCH /api/v1/notifications/read-all`.
 - Challenge metrics: `STEPS`, `WORKOUT_MINUTES`, `ACTIVE_MINUTES`; month uses `YYYY-MM` and Asia/Kolkata boundaries. Winners are top N or every participant meeting target. Ties share rank, winner points use idempotent wallet transactions, and final records are saved on completion.
