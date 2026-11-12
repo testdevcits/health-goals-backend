@@ -134,8 +134,17 @@ router.get('/data-export',async(req,res,next)=>{try{
   const kind=['users','records','devices'].includes(req.query.kind)?req.query.kind:'records';
   const result=await query.list(kind,{...req.query,page:1,limit:100});
   const columns=kind==='users'?['name','email','publicId','gender','age','heightCm','weightKg','status','role','createdAt']:kind==='devices'?['model','manufacturer','platform','status','lastSyncAt','user']:['metricType','value','unit','recordedAt','source','user'];
+  const dateColumns=new Set(['createdAt','updatedAt','lastLoginAt','lastSyncAt','recordedAt','joinedAt','redeemedAt','expiresAt','startsAt','endsAt']);
+  const exportValue=(value,column)=>{
+    if(value==null)return '';
+    if(value instanceof Date||dateColumns.has(column)){
+      const date=value instanceof Date?value:new Date(value);
+      if(!Number.isNaN(date.getTime()))return `${new Intl.DateTimeFormat('en-IN',{timeZone:'Asia/Kolkata',day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit',hour12:true}).format(date)} IST`;
+    }
+    return String(value);
+  };
   const quote=value=>`"${String(value??'').replace(/"/g,'""')}"`;
-  const csv=[columns.join(','),...result.items.map(row=>columns.map(column=>quote(column==='user'?(row.user?.email||row.user?.name||''):row[column])).join(','))].join('\n');
+  const csv=[columns.join(','),...result.items.map(row=>columns.map(column=>quote(exportValue(column==='user'?(row.user?.email||row.user?.name||''):row[column],column))).join(','))].join('\n');
   res.setHeader('Content-Type','text/csv; charset=utf-8');res.setHeader('Content-Disposition',`attachment; filename="health-${kind}.csv"`);res.status(200).send(csv);
 }catch(error){next(error);}});
 router.post('/activity-import',adminWriteLimiter,async(req,res,next)=>{try{
