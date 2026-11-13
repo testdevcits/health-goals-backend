@@ -82,6 +82,7 @@ Registration example:
 |---|---|---|
 | POST | `/health/records` | Ek health record save/update karein. Neeche payload dekhein. New record `201`, duplicate `200`. |
 | POST | `/health/sync` | Batch upload: `{"records":[...]}`; 1–100 records per request. Optional `includeRecords:false` returns counts only to reduce response size. |
+| GET | `/health/sync` | Apne synced records fetch karein; same paginated filters/output as `GET /health/records` (`metricType`, `from`, `to`, `page`, `limit`). Bearer token required. |
 | POST | `/health/steps/daily` | Compact Health Connect daily total: `{"date":"YYYY-MM-DD","steps":6420,"dataOrigin":"...","recordingMethod":"automatic","deviceId":"..."}`. Replaces that origin's total for the day; safe to retry. |
 | GET | `/health/records` | Apne records; optional `metricType`. Is endpoint par pagination/date filters implemented nahi hain; paginated list ke liye `/activity/records` use karein. |
 | GET | `/health/history` | Daily aggregated metric history; `metricType`, `from=YYYY-MM-DD`, `to=YYYY-MM-DD` required. |
@@ -89,9 +90,11 @@ Registration example:
 | GET | `/health/summary` | Health metrics ka summary. |
 | GET | `/health/dashboard` | Dashboard ke liye combined data. |
 
-### Issue check — 13 November 2026
+### Issue check and GET support — 13 November 2026
 
-`GET https://health-goals-backend.vercel.app/api/v1/health/sync` is not a supported request. Health sync is a protected `POST` endpoint; it requires `Authorization: Bearer <accessToken>`, `Content-Type: application/json`, and a non-empty `records` array in the JSON body. The reported response (`records must be a non-empty array`) means the request reached sync validation without that required body; it does not indicate that GET can retrieve synced records. Use `GET /health/records` to read records, or send a POST request to sync them. The deployed URL could not be independently fetched during this check; this finding is confirmed by the local route and service implementation.
+`GET https://health-goals-backend.vercel.app/api/v1/health/sync` initially returned `records must be a non-empty array` because only POST sync was registered. GET is now supported on the same path and returns the authenticated user's records using the same filters and paginated response as `GET /health/records`. POST remains the upload method and requires `Authorization: Bearer <accessToken>`, `Content-Type: application/json`, and a non-empty `records` array. Deployment is a separate step; this code change must be deployed before the hosted URL supports GET.
+
+Example read request: `curl -H "Authorization: Bearer <accessToken>" "https://health-goals-backend.vercel.app/api/v1/health/sync?page=1&limit=100"`.
 
 ```bash
 curl -X POST https://health-goals-backend.vercel.app/api/v1/health/sync \

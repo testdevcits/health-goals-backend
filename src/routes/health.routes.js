@@ -7,6 +7,7 @@ const router = express.Router();
 
 router.post('/records', authenticate, syncLimiter, healthController.createRecord);
 router.post('/sync', authenticate, syncLimiter, healthController.syncRecords);
+router.get('/sync', authenticate, healthController.getRecords);
 router.post('/steps/daily', authenticate, syncLimiter, healthController.syncDailySteps);
 router.get('/records', authenticate, healthController.getRecords);
 router.get('/history', authenticate, healthController.getHistory);
