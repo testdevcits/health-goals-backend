@@ -89,6 +89,17 @@ Registration example:
 | GET | `/health/summary` | Health metrics ka summary. |
 | GET | `/health/dashboard` | Dashboard ke liye combined data. |
 
+### Issue check — 13 November 2026
+
+`GET https://health-goals-backend.vercel.app/api/v1/health/sync` is not a supported request. Health sync is a protected `POST` endpoint; it requires `Authorization: Bearer <accessToken>`, `Content-Type: application/json`, and a non-empty `records` array in the JSON body. The reported response (`records must be a non-empty array`) means the request reached sync validation without that required body; it does not indicate that GET can retrieve synced records. Use `GET /health/records` to read records, or send a POST request to sync them. The deployed URL could not be independently fetched during this check; this finding is confirmed by the local route and service implementation.
+
+```bash
+curl -X POST https://health-goals-backend.vercel.app/api/v1/health/sync \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <accessToken>" \
+  -d '{"records":[{"metricType":"steps","value":4000,"unit":"count","recordedAt":"2026-11-13T09:30:00+05:30","source":"health_connect","sourceRecordId":"steps-stable-id-001"}]}'
+```
+
 Record ke required fields: `metricType`, `value`, `unit`, `recordedAt`, `source`, `sourceRecordId`. Optional fields mein `deviceId`, `sourceVersion`, `startTime`, `endTime`, `dataOrigin`, `recordingMethod`, `activityType`, `metadata`, `deleted` shamil hain. `deviceId` diya ho to woh logged-in user ka hona chahiye.
 
 ```json
