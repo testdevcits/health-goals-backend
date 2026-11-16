@@ -188,7 +188,7 @@ async function groupLeaderboard(id,userId){
   }
  }
  const all=await require('./user.model').listUsers();
- return ids.map((memberId,index)=>{const data=totals.get(memberId)||{steps:0,days:0},user=all.find(item=>String(item.id)===memberId);return {id:memberId,rank:0,name:user?.name||'Member',steps:data.steps,initials:(user?.name||'M').split(/\s+/).map(value=>value[0]).slice(0,2).join('').toUpperCase(),streak:`${data.days instanceof Set?data.days.size:data.days} active days`,color:['#FF8278','#579CF4','#00C6A2','#FF9B38','#8175F5'][index%5]};}).sort((a,b)=>b.steps-a.steps).map((row,index)=>({...row,rank:index+1}));
+ return ids.map((memberId,index)=>{const data=totals.get(memberId)||{steps:0,days:0},user=all.find(item=>String(item.id)===memberId);return {id:memberId,rank:0,name:user?.name||'Member',profileImageUrl:user?.profileImageUrl||'',steps:data.steps,initials:(user?.name||'M').split(/\s+/).map(value=>value[0]).slice(0,2).join('').toUpperCase(),streak:`${data.days instanceof Set?data.days.size:data.days} active days`,color:['#FF8278','#579CF4','#00C6A2','#FF9B38','#8175F5'][index%5]};}).sort((a,b)=>b.steps-a.steps).map((row,index)=>({...row,rank:index+1}));
 }
 function validActivityDay(day){const value=day||new Date(Date.now()+330*60000).toISOString().slice(0,10);if(!/^\d{4}-\d{2}-\d{2}$/.test(value)||Number.isNaN(+new Date(`${value}T00:00:00Z`))||new Date(`${value}T00:00:00Z`).toISOString().slice(0,10)!==value)throw new AppError('day must be a valid YYYY-MM-DD date',400);return value;}
 async function activityForGroups(groups,day){

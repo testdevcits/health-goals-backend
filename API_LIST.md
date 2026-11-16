@@ -175,7 +175,7 @@ Example: `/activity/records?page=1&limit=20&metricType=steps&from=2026-10-01&to=
 | POST | `/community/groups/:id/leave` | Group chhodein. GL leave kare to oldest member GL banega. |
 | GET | `/community/groups/:id/activity?day=YYYY-MM-DD` | Daily group totals/member activity; each member ke `joinedAt` se pehle ke records exclude hote hain. |
 | GET | `/community/groups/leaderboard?day=YYYY-MM-DD` | Public groups ka daily steps leaderboard. |
-| GET | `/community/groups/:id/leaderboard` | Group ke members ka 7-day steps leaderboard; membership start se pehle ke records exclude hote hain. |
+| GET | `/community/groups/:id/leaderboard` | Group ke members ka 7-day steps leaderboard; membership start se pehle ke records exclude hote hain. Har member mein `profileImageUrl` aata hai (photo na ho to empty string); UI image missing ya load fail hone par `initials`/`color` use kare. |
 | GET/POST | `/community/groups/:id/messages` | Joined members ka chat history/send; send body `message`. |
 | Socket.IO | `group:join` | Auth token ke saath joined group room join karein; payload `{ groupId }`. |
 | Socket.IO | `group:send` | Payload `{ groupId, message }`; saved message group members ko `group:message` event mein milta hai. |
