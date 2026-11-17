@@ -4,6 +4,11 @@ const users = require('../models/user.model');
 const health = require('../models/health.model');
 const devices = require('../models/device.model');
 const { AppError } = require('../middleware/error.middleware');
+const { performance } = require('node:perf_hooks');
+const OVERVIEW_CACHE_TTL_MS = 15_000;
+let overviewCache = null;
+let overviewPending = null;
+let overviewGeneration = 0;
 const configs = {
   users: { model: users.User, read: users.listUsers, time: 'createdAt', fields: ['name','email','publicId','gender'], projection: '-passwordHash -refreshTokenHash -profileAnswers', convert: users.toPublicUser },
   records: { model: health.HealthRecord, read: health.listAdmin, time: 'recordedAt', fields: ['metricType','source','sourceRecordId'], convert: row => ({ ...row, id: String(row._id), _id: undefined, __v: undefined }) },
@@ -164,17 +169,70 @@ function inNumericRange(value,min,max){if((min===undefined||min==='')&&(max===un
 function calculateAge(value){if(!value)return null;const match=/^(\d{2})\/(\d{2})\/(\d{4})$/.exec(value);if(!match)return null;const [,d,m,y]=match,parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(new Date()),today=Object.fromEntries(parts.map(part=>[part.type,Number(part.value)])),birth=new Date(Number(y),Number(m)-1,Number(d));if(birth.getFullYear()!==Number(y)||birth.getMonth()!==Number(m)-1||birth.getDate()!==Number(d))return null;let age=today.year-birth.getFullYear();if(today.month<Number(m)||(today.month===Number(m)&&today.day<Number(d)))age--;return age<0||age>120?null:age;}
 function inAgeRange(value,min,max){if((min===undefined||min==='')&&(max===undefined||max===''))return true;const age=calculateAge(value);return age!==null&&(min===undefined||min===''||age>=Number(min))&&(max===undefined||max===''||age<=Number(max));}
 function ageFromBirthDate(value){return calculateAge(value);}
-async function overview() {
-  if(env.useMongoDB) {
-    const today=new Date();today.setUTCHours(0,0,0,0);
-    const [userCount,recordCount,deviceCount,syncedToday,recent]=await Promise.all([
-      users.User.countDocuments({}),health.HealthRecord.countDocuments({}),devices.Device.countDocuments({status:'ACTIVE'}),
-      health.HealthRecord.countDocuments({createdAt:{$gte:today}}),
-      health.HealthRecord.find().sort({recordedAt:-1,_id:-1}).limit(8).lean()
-    ]);
-    return {users:userCount,records:recordCount,devices:deviceCount,syncedToday,storage:'mongodb',recentRecords:await attachUsers(recent.map(configs.records.convert))};
-  }
-  const [u,h,d]=await Promise.all([users.listUsers(),health.listAdmin(),devices.listAdmin()]);
-  return {users:u.length,records:h.length,devices:d.filter(x=>x.status==='ACTIVE').length,syncedToday:h.filter(x=>new Date(x.createdAt).toISOString().slice(0,10)===new Date().toISOString().slice(0,10)).length,storage:'temporary',recentRecords:await attachUsers(h.sort((a,b)=>new Date(b.recordedAt)-new Date(a.recordedAt)).slice(0,8))};
+function istDayStart(date=new Date()){
+  const parts=Object.fromEntries(new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kolkata',year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date).map(part=>[part.type,Number(part.value)]));
+  return new Date(Date.UTC(parts.year,parts.month-1,parts.day)-330*60_000);
 }
-module.exports={list,overview,buildQuery};
+async function overviewUncached(){
+  const timings={};
+  const measure=async(name,operation)=>{
+    const started=performance.now();
+    try{return await operation();}
+    finally{timings[name]=Math.round((performance.now()-started)*100)/100;}
+  };
+  const started=performance.now();
+  let result;
+  if(env.useMongoDB) {
+    const today=istDayStart();
+    const tomorrow=new Date(today.getTime()+24*60*60*1000);
+    const [userCount,recordCount,deviceCount,syncedToday,recent]=await Promise.all([
+      measure('usersCount',()=>users.User.countDocuments({})),
+      measure('recordsCount',()=>health.HealthRecord.countDocuments({})),
+      measure('activeDevicesCount',()=>devices.Device.countDocuments({status:'ACTIVE'})),
+      measure('todayRecordsCount',()=>health.HealthRecord.countDocuments({createdAt:{$gte:today,$lt:tomorrow}})),
+      measure('recentRecordsQuery',()=>health.HealthRecord.find().sort({recordedAt:-1,_id:-1}).limit(8).lean())
+    ]);
+    const recentRows=recent.map(configs.records.convert);
+    const recentRecords=await measure('recentUsersLookup',()=>attachUsers(recentRows));
+    result={users:userCount,records:recordCount,devices:deviceCount,syncedToday,storage:'mongodb',recentRecords};
+  } else {
+    const [u,h,d]=await Promise.all([
+      measure('usersLoad',()=>users.listUsers()),
+      measure('recordsLoad',()=>health.listAdmin()),
+      measure('devicesLoad',()=>devices.listAdmin())
+    ]);
+    const today=istDayStart();
+    const tomorrow=new Date(today.getTime()+24*60*60*1000);
+    const syncedToday=h.filter(record=>{const createdAt=new Date(record.createdAt);return createdAt>=today&&createdAt<tomorrow;}).length;
+    const recent=await measure('recentUsersLookup',()=>attachUsers(h.sort((a,b)=>new Date(b.recordedAt)-new Date(a.recordedAt)).slice(0,8)));
+    result={users:u.length,records:h.length,devices:d.filter(device=>device.status==='ACTIVE').length,syncedToday,storage:'temporary',recentRecords:recent};
+  }
+  timings.total=Math.round((performance.now()-started)*100)/100;
+  console.info('[admin-overview] database timings',JSON.stringify({mode:env.useMongoDB?'mongodb':'temporary',cache:'MISS',timingsMs:timings}));
+  return result;
+}
+async function overview(){
+  const now=Date.now();
+  const mode=env.useMongoDB?'mongodb':'temporary';
+  if(overviewCache&&overviewCache.mode===mode&&overviewCache.expiresAt>now){
+    console.info('[admin-overview] cache HIT');
+    return overviewCache.data;
+  }
+  if(overviewPending?.generation===overviewGeneration){
+    console.info('[admin-overview] request joined in-flight load');
+    return overviewPending.promise;
+  }
+  const generation=overviewGeneration;
+  const promise=overviewUncached().then(data=>{
+    if(generation===overviewGeneration)overviewCache={data,mode,expiresAt:Date.now()+OVERVIEW_CACHE_TTL_MS};
+    return data;
+  }).finally(()=>{if(overviewPending?.promise===promise)overviewPending=null;});
+  overviewPending={promise,generation};
+  return promise;
+}
+function invalidateOverviewCache(){
+  overviewGeneration+=1;
+  overviewCache=null;
+  overviewPending=null;
+}
+module.exports={list,overview,buildQuery,invalidateOverviewCache};

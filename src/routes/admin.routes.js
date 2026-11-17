@@ -36,6 +36,11 @@ router.use(async(req,res,next)=>{try{
   const required=permissionForRequest(req);
   return required&&permissions.includes(required)?next():next(new AppError('Sub-admin permission is not granted for this action',403));
 }catch(error){next(error);}});
+router.use((req,res,next)=>{
+  if(['GET','HEAD','OPTIONS'].includes(req.method))return next();
+  res.once('finish',()=>{if(res.statusCode<400)query.invalidateOverviewCache();});
+  next();
+});
 const coinRules=require('../services/coin-rules.service');
 const rewardRules=require('../services/reward-rule.service');
 const profileQuestions=require('../models/profile-question.model');
