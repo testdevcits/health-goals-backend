@@ -118,9 +118,18 @@ const startServer = async () => {
     rewardWorker.start();
     challengeWorker.start();
   } catch (error) {
-    console.error('Failed to start server:', error.code === 'EADDRINUSE'
+    const message = error.code === 'EADDRINUSE'
       ? `Port ${env.port} is already in use. Stop the process using it or set PORT to a free port.`
-      : error.message);
+      : error.message;
+    console.error('Failed to start server:', message);
+    if (env.useMongoDB && error.name === 'MongoServerSelectionError') {
+      console.error('MongoDB connection did not reach a usable server. Check Atlas Network Access, database credentials, and the local network/VPN/firewall.');
+      if (error.reason) {
+        for (const [address, server] of error.reason.servers || []) {
+          console.error(`MongoDB server ${address}: ${server.error?.code || server.error?.name || server.type}`);
+        }
+      }
+    }
     if (server?.listening) await new Promise(resolve => server.close(resolve));
     if (httpServer?.listening) await new Promise(resolve => httpServer.close(resolve));
     await settlementWorker.stop();

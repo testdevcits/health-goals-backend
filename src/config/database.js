@@ -7,7 +7,12 @@ const connectDatabase = async () => {
     return;
   }
 
-  await mongoose.connect(env.mongoUri);
+  // Fail with a useful connection error instead of waiting for the driver's
+  // relatively long default server selection timeout during local startup.
+  await mongoose.connect(env.mongoUri, {
+    serverSelectionTimeoutMS: Number(process.env.MONGODB_SERVER_SELECTION_TIMEOUT_MS) || 15000,
+    connectTimeoutMS: Number(process.env.MONGODB_CONNECT_TIMEOUT_MS) || 10000
+  });
   {
     const hello = await mongoose.connection.db.admin().command({ hello: 1 });
     if (!hello.setName && hello.msg !== 'isdbgrid') throw new Error('Daily point settlement requires MongoDB Atlas or a replica set for atomic transactions. Standalone MongoDB is not supported.');

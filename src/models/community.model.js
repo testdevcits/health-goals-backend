@@ -166,24 +166,27 @@ async function groupLeaderboard(id,userId){
  const group=await findGroup(id);if(!group)throw new AppError('Group not found',404);
  const members=group.members||[];
  if(!members.some(member=>idOf(member.userId||member)===String(userId)))throw new AppError('Join the group to view its leaderboard',403);
- const ids=members.map(member=>idOf(member.userId||member)),weekStart=new Date(Date.now()-7*86400000),totals=new Map();
+ // Leaderboard covers the latest seven Asia/Kolkata calendar dates, including today.
+ const dailyRules=require('../services/daily-rules');
+ const today=dailyRules.dayKey(new Date()),weekStartDay=dailyRules.dayKey(new Date(+new Date(`${today}T00:00:00+05:30`)-6*86400000));
+ const weekStart=new Date(`${weekStartDay}T00:00:00+05:30`),ids=members.map(member=>idOf(member.userId||member)),totals=new Map();
  if(env.useMongoDB){
   const branches=members.map(member=>({case:{$eq:['$userId',member.userId]},then:memberJoinedAt(group,idOf(member.userId))}));
-  const weekStartDay=require('../services/daily-rules').dayKey(weekStart);
-  const activityDateExpr={$cond:[{$ne:[{$ifNull:['$startTime',null]},null]},'$startTime',{$dateFromString:{dateString:{$concat:[{$ifNull:['$activityDate','']},'T00:00:00+05:30']},onError:'$recordedAt'}}]};
+  const activityDateExpr={$ifNull:['$activityDate',{$dateToString:{date:{$cond:[{$ne:[{$ifNull:['$startTime',null]},null]},'$startTime','$recordedAt']},format:'%Y-%m-%d',timezone:'Asia/Kolkata'}}]};
   const rows=await require('./health.model').HealthRecord.aggregate([
-   {$match:{userId:{$in:members.map(member=>member.userId)},metricType:'steps',deleted:{$ne:true},$or:[{recordedAt:{$gte:weekStart}},{activityDate:{$gte:weekStartDay}}]}},
-   {$addFields:{membershipStart:{$switch:{branches,default:new Date()}},activityStartAt:activityDateExpr}},
-   {$match:{$expr:{$and:[{$gte:['$activityStartAt',weekStart]},{$gte:['$activityStartAt','$membershipStart']}]}}},
-   {$group:{_id:'$userId',steps:{$sum:'$value'},days:{$addToSet:{$ifNull:['$activityDate',{$dateToString:{date:'$activityStartAt',format:'%Y-%m-%d',timezone:'Asia/Kolkata'}}]}}}},
+   {$match:{userId:{$in:members.map(member=>member.userId)},metricType:'steps',deleted:{$ne:true},$or:[{activityDate:{$gte:weekStartDay}},{activityDate:{$exists:false},recordedAt:{$gte:weekStart}}]}},
+   {$addFields:{membershipStart:{$switch:{branches,default:new Date()}},activityDateKey:activityDateExpr}},
+   {$match:{$expr:{$and:[{$gte:['$activityDateKey',weekStartDay]},{$gte:[{$dateFromString:{dateString:{$concat:['$activityDateKey','T00:00:00+05:30']},onError:'$recordedAt'}},'$membershipStart']}]}}},
+   {$group:{_id:'$userId',steps:{$sum:'$value'},days:{$addToSet:'$activityDateKey'}}},
   ]);
   for(const row of rows)totals.set(String(row._id),{steps:row.steps,days:row.days.filter(Boolean).length});
  }else{
   for(const row of require('./health.model').healthRecords){
    const memberId=String(row.user_id),member=members.find(entry=>idOf(entry.userId||entry)===memberId);
    const record=require('./health.model').toHealthRecord(row),activityAt=activityStartAt(record);
-   if(member&&row.metric_type==='steps'&&activityAt>=weekStart&&activityAt>=memberJoinedAt(group,memberId)&&!row.deleted){
-    const value=totals.get(memberId)||{steps:0,days:new Set()};value.steps+=Number(row.value);value.days.add(row.activityDate||require('../services/daily-rules').dayKey(activityAt));totals.set(memberId,value);
+   const activityDay=record.activityDate||dailyRules.dayKey(activityAt);
+   if(member&&row.metric_type==='steps'&&activityDay>=weekStartDay&&activityAt>=memberJoinedAt(group,memberId)&&!row.deleted){
+    const value=totals.get(memberId)||{steps:0,days:new Set()};value.steps+=Number(row.value);value.days.add(activityDay);totals.set(memberId,value);
    }
   }
  }
