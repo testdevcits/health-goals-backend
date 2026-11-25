@@ -197,7 +197,11 @@ async function progressFor(challenges, now = new Date(), focusUserId = null) {
       new Date(record.recorded_at || record.recordedAt) >= start &&
       new Date(record.recorded_at || record.recordedAt) < end,
     ).map(health.toHealthRecord);
-  const users = focusUserId ? [] : await require('./user.model').listUsers();
+  const participantIds = [...new Set(windows.flatMap(({row}) => (row.participants || []).map(item => idOf(item.userId?._id || item.userId))))];
+  const users = focusUserId ? [] : env.useMongoDB
+    ? (participantIds.length ? await require('./user.model').User.find({ _id: { $in: participantIds.filter(id => mongoose.isValidObjectId(id)).map(id => new mongoose.Types.ObjectId(id)) } }).select('_id name profileImageUrl').lean() : [])
+    : await require('./user.model').listUsers();
+  const usersById = new Map(users.map(user => [String(user._id || user.id), user]));
   const output = new Map();
   for (const {row,start,end} of windows) {
     const people = focusUserId
@@ -213,7 +217,7 @@ async function progressFor(challenges, now = new Date(), focusUserId = null) {
       if (row.metric === 'ACTIVE_MINUTES' && record.metricType === 'active_minutes') byUser.set(userId, byUser.get(userId) + Number(record.value));
     }
     for (const [userId,value] of byUser) output.set(`${idOf(row)}:${userId}`, Math.round(value));
-    const ranking = people.map(userId => { const user = users.find(item => String(item.id) === userId); return { id: userId, userId, name: user?.name || 'Member', profileImageUrl: user?.profileImageUrl || '', value: Math.round(byUser.get(userId) || 0) }; }).sort((a,b)=>b.value-a.value||a.id.localeCompare(b.id));
+    const ranking = people.map(userId => { const user = usersById.get(userId); return { id: userId, userId, name: user?.name || 'Member', profileImageUrl: user?.profileImageUrl || user?.profile_image_url || '', value: Math.round(byUser.get(userId) || 0) }; }).sort((a,b)=>b.value-a.value||a.id.localeCompare(b.id));
     let rank = 0, previous = null;
     const ranked = ranking.map((item,index)=>{ if(item.value!==previous)rank=index+1; previous=item.value; return {...item,rank,progress:Math.min(100,item.value/Number(row.targetValue)*100),achieved:item.value>=Number(row.targetValue)}; });
     output.set(`${idOf(row)}:leaderboard`, ranked);
