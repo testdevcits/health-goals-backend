@@ -198,8 +198,9 @@ async function progressFor(challenges, now = new Date(), focusUserId = null) {
       new Date(record.recorded_at || record.recordedAt) < end,
     ).map(health.toHealthRecord);
   const participantIds = [...new Set(windows.flatMap(({row}) => (row.participants || []).map(item => idOf(item.userId?._id || item.userId))))];
-  const users = focusUserId ? [] : env.useMongoDB
-    ? (participantIds.length ? await require('./user.model').User.find({ _id: { $in: participantIds.filter(id => mongoose.isValidObjectId(id)).map(id => new mongoose.Types.ObjectId(id)) } }).select('_id name profileImageUrl').lean() : [])
+  const profileIds = focusUserId ? [String(focusUserId)] : participantIds;
+  const users = env.useMongoDB
+    ? (profileIds.length ? await require('./user.model').User.find({ _id: { $in: profileIds.filter(id => mongoose.isValidObjectId(id)).map(id => new mongoose.Types.ObjectId(id)) } }).select('_id name profileImageUrl').lean() : [])
     : await require('./user.model').listUsers();
   const usersById = new Map(users.map(user => [String(user._id || user.id), user]));
   const output = new Map();
