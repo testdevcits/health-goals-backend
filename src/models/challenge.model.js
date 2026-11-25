@@ -17,7 +17,7 @@ const schema = new mongoose.Schema({
   rewardPoints: { type: Number, default: 0, min: 0 },
   status: { type: String, enum: ['DRAFT', 'PUBLISHED', 'PAUSED', 'ENDED'], default: 'DRAFT', index: true },
   participants: [{ userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }, joinedAt: { type: Date, default: Date.now } }],
-  results: [{ userId: String, name: String, value: Number, rank: Number, winner: Boolean }],
+  results: [{ userId: String, name: String, profileImageUrl: String, value: Number, rank: Number, winner: Boolean }],
   finalizedAt: Date,
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   updatedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true }
@@ -213,7 +213,7 @@ async function progressFor(challenges, now = new Date(), focusUserId = null) {
       if (row.metric === 'ACTIVE_MINUTES' && record.metricType === 'active_minutes') byUser.set(userId, byUser.get(userId) + Number(record.value));
     }
     for (const [userId,value] of byUser) output.set(`${idOf(row)}:${userId}`, Math.round(value));
-    const ranking = people.map(userId => { const user = users.find(item => String(item.id) === userId); return { id: userId, userId, name: user?.name || 'Member', value: Math.round(byUser.get(userId) || 0) }; }).sort((a,b)=>b.value-a.value||a.id.localeCompare(b.id));
+    const ranking = people.map(userId => { const user = users.find(item => String(item.id) === userId); return { id: userId, userId, name: user?.name || 'Member', profileImageUrl: user?.profileImageUrl || '', value: Math.round(byUser.get(userId) || 0) }; }).sort((a,b)=>b.value-a.value||a.id.localeCompare(b.id));
     let rank = 0, previous = null;
     const ranked = ranking.map((item,index)=>{ if(item.value!==previous)rank=index+1; previous=item.value; return {...item,rank,progress:Math.min(100,item.value/Number(row.targetValue)*100),achieved:item.value>=Number(row.targetValue)}; });
     output.set(`${idOf(row)}:leaderboard`, ranked);
@@ -228,7 +228,7 @@ async function finalizeDue(now = new Date(), notify = async () => {}) {
     const progress = await progressFor([row], now), leaderboard = progress.get(`${idOf(row)}:leaderboard`) || [];
     const qualifying = row.winnerMode === 'ALL_TARGET_MET' ? leaderboard.filter(item => item.achieved) : (leaderboard[0]?.rank > 0 ? leaderboard.filter(item => item.rank <= Number(row.winnersCount || 1)) : []);
     const winners = new Set(qualifying.map(item => item.id));
-    const results = leaderboard.map(({id,name,value,rank}) => ({ userId:id, name, value, rank, winner:winners.has(id) }));
+    const results = leaderboard.map(({id,name,profileImageUrl,value,rank}) => ({ userId:id, name, profileImageUrl:profileImageUrl||'', value, rank, winner:winners.has(id) }));
     if (row.rewardPoints > 0) for (const winnerId of winners) {
       const walletUserId=env.useMongoDB?new mongoose.Types.ObjectId(winnerId):winnerId;
       try { await wallet.createTransaction({ userId:walletUserId, type:'BONUS', amount:row.rewardPoints, referenceType:'CHALLENGE_WIN', referenceId:idOf(row), description:`Winner bonus: ${row.title}`, idempotencyKey:`challenge:${idOf(row)}:winner:${winnerId}` }); }

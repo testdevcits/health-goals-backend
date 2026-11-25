@@ -268,7 +268,10 @@ const getRecords = async (userId, filters = {}) => {
 const getRecordsPage = async (userId, filters = {}) => {
   if (filters.metricType) validateMetricType(filters.metricType);
   const { page, limit, query } = require('./admin-query.service').buildQuery('records', { metricType: filters.metricType, from: filters.from, to: filters.to, page: filters.page, limit: filters.limit || 100 });
-  const rows = await healthModel.getHealthRecordsByUserId(userId, { metricType: filters.metricType, from: query.recordedAt?.$gte, to: query.recordedAt?.$lte, offset: (page - 1) * limit, limit: limit + 1 });
+  // The sync read endpoint is a rolling window by default. Explicit date
+  // filters continue to use the shared calendar-day validation above.
+  const from = filters.from ? query.recordedAt?.$gte : new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const rows = await healthModel.getHealthRecordsByUserId(userId, { metricType: filters.metricType, from, to: query.recordedAt?.$lte, offset: (page - 1) * limit, limit: limit + 1 });
   const hasMore = rows.length > limit;
   return { records: rows.slice(0, limit), page, limit, hasMore, nextPage: hasMore ? page + 1 : null };
 };

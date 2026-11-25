@@ -5,6 +5,7 @@ const daily=require('./daily-settlement.service');
 const {dayKey}=require('./daily-rules');
 const {REWARD_METRICS}=require('./health-metrics');
 const {AppError}=require('../middleware/error.middleware');
+const WORKOUT_CATEGORIES=['running','walking','cycling','strength','yoga','hiit','swimming','circuit_training','hiking','weight_machines','bike_indoor','treadmill','elliptical_trainer','dance','core','stretch'];
 const revisionSchema=new mongoose.Schema({recordId:mongoose.Schema.Types.ObjectId,userId:mongoose.Schema.Types.ObjectId,sourceVersion:Number,snapshot:mongoose.Schema.Types.Mixed},{timestamps:{createdAt:true,updatedAt:false}});
 revisionSchema.index({recordId:1,sourceVersion:1},{unique:true});
 const HealthRevision=mongoose.model('HealthRevision',revisionSchema);
@@ -25,7 +26,7 @@ function extraFields(payload){
  }
  if(['workout','meditation'].includes(payload.metricType)){
   if(!extra.startTime||payload.unit!=='min')throw new AppError('Workout/meditation require an interval and unit min',400);
-  if(payload.metricType==='workout'&&!['walking','running','hiking','treadmill','cycling','yoga','strength','swimming','other'].includes(extra.activityType))throw new AppError('A supported activityType is required for workout',400);
+  if(payload.metricType==='workout'&&!WORKOUT_CATEGORIES.includes(extra.activityType))throw new AppError('A supported activityType is required for workout',400);
  }
  if(payload.metricType==='steps'&&(payload.unit!=='count'||!Number.isSafeInteger(Number(payload.value))))throw new AppError('Steps require integer count',400);
  if(['water_checkin','sleep_checkin'].includes(payload.metricType)&&(Number(payload.value)!==1||payload.unit!=='checkin'))throw new AppError('Habit check-ins require value 1 and unit checkin',400);
