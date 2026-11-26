@@ -40,8 +40,8 @@ const saveProfileAnswers = async (req, res, next) => {
 
 const updateDeviceProfile = async (req, res, next) => {
   try {
-    const user = await authService.updateCurrentDeviceProfile(req.user.id, req.body);
-    return successResponse(res, 200, 'Phone profile saved successfully', { user });
+    const result = await authService.updateCurrentDeviceProfile(req.user.id, req.body);
+    return successResponse(res, 200, 'Phone profile saved successfully', result);
   } catch (error) {
     next(error);
   }

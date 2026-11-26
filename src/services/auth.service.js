@@ -4,6 +4,7 @@ const jwt = require('jsonwebtoken');
 const { OAuth2Client } = require('google-auth-library');
 const env = require('../config/env');
 const userModel = require('../models/user.model');
+const deviceModel = require('../models/device.model');
 const { AppError } = require('../middleware/error.middleware');
 const { canonicalProfileKey, normalizeProfileAnswers, customProfileAnswers, normalizeGender, defaultProfileKeys } = require('../utils/profile-answers');
 
@@ -344,9 +345,10 @@ const updateCurrentDeviceProfile = async (userId, payload) => {
   }
   if (profile.platform !== 'android') throw new AppError('Only Android phone profiles are supported by this app', 400);
   profile.deviceType = 'phone';
+  const warning = await deviceModel.getDeviceReuseWarning(userId, profile.deviceIdentifier);
   const user = await userModel.updateDeviceProfile(userId, profile);
   if (!user) throw new AppError('User not found', 404);
-  return user;
+  return { user, warning };
 };
 
 module.exports = {

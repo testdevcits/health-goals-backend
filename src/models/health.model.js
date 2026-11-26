@@ -154,18 +154,36 @@ const findBySourceRecord = async (userId, source, sourceRecordId) => {
 
 const pruneHealthConnectRecords = async (userId, before, protectedActivityDates = []) => {
   if (env.useMongoDB) {
-    const result = await HealthRecord.deleteMany({ userId, source: 'health_connect', recordedAt: { $lt: before }, activityDate: { $nin: protectedActivityDates } });
-    return result.deletedCount || 0;
+    const match = { userId, source: 'health_connect', recordedAt: { $lt: before }, activityDate: { $nin: protectedActivityDates }, deleted: { $ne: true } };
+    const { HealthRevision } = require('../services/activity-ingestion.service');
+    return mongoose.connection.transaction(async session => {
+      const rows = await HealthRecord.find(match).session(session);
+      for (const row of rows) {
+        const snapshot = toHealthRecord(row);
+        await HealthRevision.create([{
+          recordId: row._id,
+          userId,
+          sourceVersion: snapshot.sourceVersion || 1,
+          snapshot,
+        }], { session });
+        row.deleted = true;
+        row.sourceVersion = (snapshot.sourceVersion || 1) + 1;
+        await row.save({ session });
+      }
+      return rows.length;
+    });
   }
-  let deleted = 0;
-  for (let index = healthRecords.length - 1; index >= 0; index -= 1) {
-    const record = healthRecords[index];
-    if (String(record.user_id) === String(userId) && record.source === 'health_connect' && new Date(record.recorded_at) < before && !protectedActivityDates.includes(record.activityDate)) {
-      healthRecords.splice(index, 1);
-      deleted += 1;
+  const { memoryRevisions } = require('../services/activity-ingestion.service');
+  let archived = 0;
+  for (const record of healthRecords) {
+    if (String(record.user_id) === String(userId) && record.source === 'health_connect' && !record.deleted && new Date(record.recorded_at) < before && !protectedActivityDates.includes(record.activityDate)) {
+      memoryRevisions.push(toHealthRecord(record));
+      record.deleted = true;
+      record.sourceVersion = (record.sourceVersion || 1) + 1;
+      archived += 1;
     }
   }
-  return deleted;
+  return archived;
 };
 
 const getHealthRecordsByUserId = async (userId, filters = {}) => {

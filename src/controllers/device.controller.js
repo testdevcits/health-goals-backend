@@ -12,8 +12,8 @@ const listDevices = async (req, res, next) => {
 
 const addDevice = async (req, res, next) => {
   try {
-    const device = await deviceService.addDevice(req.user.id, req.body, req.requestId);
-    return successResponse(res, 201, 'Device saved successfully', { device });
+    const result = await deviceService.addDevice(req.user.id, req.body, req.requestId);
+    return successResponse(res, 201, 'Device saved successfully', result);
   } catch (error) {
     next(error);
   }

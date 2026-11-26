@@ -86,6 +86,29 @@ const createDevice = async (userId, payload) => {
   return toDevice(device);
 };
 
+const getDeviceReuseWarning = async (userId, deviceIdentifier) => {
+  if (!deviceIdentifier) return null;
+  let usedByAnotherUser;
+  if (!env.useMongoDB) {
+    const userModel = require('./user.model');
+    const [registered, profiles] = await Promise.all([
+      Promise.resolve(devices.some(device => device.user_id !== userId && device.device_identifier === deviceIdentifier && device.status === 'ACTIVE')),
+      userModel.listUsers()
+    ]);
+    usedByAnotherUser = registered || profiles.some(user => user.id !== userId && user.deviceProfile?.deviceIdentifier === deviceIdentifier);
+  } else {
+    const userModel = require('./user.model');
+    const [registered, profileOwner] = await Promise.all([
+      Device.exists({ userId: { $ne: userId }, deviceIdentifier, status: 'ACTIVE' }),
+      userModel.User.exists({ _id: { $ne: userId }, 'deviceProfile.deviceIdentifier': deviceIdentifier })
+    ]);
+    usedByAnotherUser = Boolean(registered || profileOwner);
+  }
+  return usedByAnotherUser
+    ? 'This phone installation is also associated with another account. If the phone is shared, Health Connect data may sync to the currently signed-in account.'
+    : null;
+};
+
 const getDevicesByUserId = async (userId) => {
   if (!env.useMongoDB) {
     return devices
@@ -163,6 +186,7 @@ module.exports = {
   listAdmin: async () => env.useMongoDB ? (await Device.find().sort({ createdAt: -1 }).lean()).map(toDevice) : devices.map(toDevice),
   Device,
   createDevice,
+  getDeviceReuseWarning,
   getDevicesByUserId,
   removeDevice,
   setAdminDeviceStatus,

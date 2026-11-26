@@ -26,7 +26,8 @@ function extraFields(payload){
  }
  if(['workout','meditation'].includes(payload.metricType)){
   if(!extra.startTime||payload.unit!=='min')throw new AppError('Workout/meditation require an interval and unit min',400);
-  if(payload.metricType==='workout'&&!WORKOUT_CATEGORIES.includes(extra.activityType))throw new AppError('A supported activityType is required for workout',400);
+  const isUncategorizedHealthConnectWorkout=payload.source==='health_connect'&&extra.activityType==='other'&&extra.recordingMethod==='automatic'&&Boolean(extra.dataOrigin);
+  if(payload.metricType==='workout'&&!WORKOUT_CATEGORIES.includes(extra.activityType)&&!isUncategorizedHealthConnectWorkout)throw new AppError('A supported activityType is required for workout',400);
  }
  if(payload.metricType==='steps'&&(payload.unit!=='count'||!Number.isSafeInteger(Number(payload.value))))throw new AppError('Steps require integer count',400);
  if(['water_checkin','sleep_checkin'].includes(payload.metricType)&&(Number(payload.value)!==1||payload.unit!=='checkin'))throw new AppError('Habit check-ins require value 1 and unit checkin',400);

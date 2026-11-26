@@ -9,6 +9,7 @@ const addDevice = async (userId, payload, requestId) => {
     throw new AppError('deviceType and deviceIdentifier are required', 400);
   }
 
+  const warning = await deviceModel.getDeviceReuseWarning(userId, payload.deviceIdentifier);
   const device = await deviceModel.createDevice(userId, payload);
   await auditModel.createAuditLog({
     userId,
@@ -16,7 +17,7 @@ const addDevice = async (userId, payload, requestId) => {
     metadata: { deviceId: device.id, platform: device.platform },
     requestId
   });
-  return device;
+  return { device, warning };
 };
 
 const removeDevice = async (userId, id, requestId) => {
