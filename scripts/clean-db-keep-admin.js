@@ -5,6 +5,31 @@ const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../.env') });
 const mongoose = require('mongoose');
 
+// Register every app model so the cleanup covers collections used by models
+// even when a collection is empty or is not returned by a stale collection
+// inventory. MongoDB's live inventory is also included to catch legacy data.
+for (const modulePath of [
+  '../src/models/user.model',
+  '../src/models/health.model',
+  '../src/models/device.model',
+  '../src/models/daily-activity.model',
+  '../src/models/wallet.model',
+  '../src/models/task.model',
+  '../src/models/reward.model',
+  '../src/models/community.model',
+  '../src/models/challenge.model',
+  '../src/models/ticket-claim.model',
+  '../src/models/partner.model',
+  '../src/models/notification.model',
+  '../src/models/audit.model',
+  '../src/models/profile-question.model',
+  '../src/services/coin-rules.service',
+  '../src/services/otp.service',
+  '../src/services/activity-ingestion.service',
+  '../src/services/reward-engine.service',
+  '../src/services/reward-rule.service'
+]) require(modulePath);
+
 const args = new Set(process.argv.slice(2));
 const execute = args.has('--execute');
 const allowProduction = args.has('--allow-production');
@@ -34,18 +59,21 @@ async function main() {
 
   await mongoose.connect(uri, { serverSelectionTimeoutMS: 10000 });
   const db = mongoose.connection.db;
-  const collections = (await db.listCollections({}, { nameOnly: true }).toArray())
+  const existingCollections = (await db.listCollections({}, { nameOnly: true }).toArray())
     .map(collection => collection.name)
-    .filter(name => !name.startsWith('system.'))
-    .sort();
+    .filter(name => !name.startsWith('system.'));
+  const modelCollections = mongoose.modelNames()
+    .map(modelName => mongoose.model(modelName).collection.collectionName);
+  const collections = [...new Set([...existingCollections, ...modelCollections])].sort();
   const adminFilter = {
     $or: [
       { role: { $in: ['ADMIN', 'SUB_ADMIN'] } },
       ...(configuredAdminEmails.length ? [{ email: { $in: configuredAdminEmails } }] : [])
     ]
   };
-  const userCollectionExists = collections.includes('users');
-  const users = userCollectionExists ? db.collection('users') : null;
+  const userCollectionName = mongoose.model('User').collection.collectionName;
+  const userCollectionExists = collections.includes(userCollectionName);
+  const users = userCollectionExists ? db.collection(userCollectionName) : null;
   const adminCount = users ? await users.countDocuments(adminFilter) : 0;
   const nonAdminCount = users ? await users.countDocuments({ $nor: [adminFilter] }) : 0;
 
@@ -55,7 +83,7 @@ async function main() {
   console.log(`Non-admin user accounts to delete: ${nonAdminCount}`);
   if (!adminCount) throw new Error('No ADMIN or SUB_ADMIN account matched. Refusing to continue.');
 
-  const dataCollections = collections.filter(name => name !== 'users');
+  const dataCollections = collections.filter(name => name !== userCollectionName);
   for (const name of dataCollections) {
     const count = await db.collection(name).countDocuments({});
     console.log(`  ${name}: ${count} document(s)${execute ? '' : ' (would clear)'}`);
@@ -74,7 +102,7 @@ async function main() {
   const removedUsers = await users.deleteMany({ $nor: [adminFilter] });
   console.log(`Deleted non-admin users: ${removedUsers.deletedCount}.`);
   console.log(`Preserved admin accounts: ${await users.countDocuments(adminFilter)}.`);
-  console.log('Database clean completed. Admin accounts remain; app/module data was cleared.');
+  console.log('Database clean completed. Matching admin accounts remain; every other app and legacy collection was cleared.');
 }
 
 main()

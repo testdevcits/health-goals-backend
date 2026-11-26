@@ -90,6 +90,22 @@ Development mode:
 npm run dev
 ```
 
+## Start with a clean database and keep admin accounts
+
+Preview which MongoDB database and collections will be cleared:
+
+```bash
+npm run db:seed:clean
+```
+
+After reviewing the dry-run output, execute the cleanup by confirming the exact database name shown in `MONGODB_URI`:
+
+```bash
+npm run db:seed:clean -- --execute --confirm-db=YOUR_DATABASE_NAME
+```
+
+This preserves users with `ADMIN` or `SUB_ADMIN` roles and addresses in `ADMIN_EMAILS`; it deletes other users and clears every other non-system collection. It refuses to run if no admin account matches. Production also requires `--allow-production`. This is destructive and has no automatic rollback.
+
 ## API Endpoints
 
 For Android request payloads, response examples, authentication/OTP, Health Connect sync, daily points, wallet, rewards, devices, and community, see the [Android API and Flow Guide](../android/docs/ANDROID_API_AND_FLOW.md). The concise endpoint catalog is in [API_LIST.md](API_LIST.md).
