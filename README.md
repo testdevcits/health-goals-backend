@@ -104,7 +104,7 @@ After reviewing the dry-run output, execute the cleanup by confirming the exact 
 npm run db:seed:clean -- --execute --confirm-db=YOUR_DATABASE_NAME
 ```
 
-This preserves users with `ADMIN` or `SUB_ADMIN` roles and addresses in `ADMIN_EMAILS`; it deletes other users and clears every other non-system collection. It refuses to run if no admin account matches. Production also requires `--allow-production`. This is destructive and has no automatic rollback.
+This preserves users with `ADMIN` or `SUB_ADMIN` roles and addresses in `ADMIN_EMAILS`; it deletes other users and clears every other non-system collection, including wallets and points-ledger transactions (`GET /wallet` and `/activity/transactions`), daily activity/settlement records, reward offers, redemptions, and imported voucher codes. A later Health Connect sync or daily settlement run can create new activity, wallet, and transaction data again. Pause sync/settlement processing while cleaning if the deployed app must stay empty. The script only affects the MongoDB database named by this backend's `MONGODB_URI`; to clear data served by the deployed Vercel API, run it in an environment configured for that same database. It refuses to run if no admin account matches. Production also requires `--allow-production`. This is destructive and has no automatic rollback.
 
 ## API Endpoints
 
